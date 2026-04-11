@@ -235,6 +235,21 @@ class PersonaPlus(Star):
 
         return folder_id, persona_id
 
+    async def _get_folder_path_by_id(self, folder_id: str | None) -> str:
+        if not folder_id:
+            return "根目录"
+
+        folders = {
+            folder.folder_id: folder
+            for folder in await self.persona_mgr.get_all_folders()
+        }
+        parts: list[str] = []
+        current = folders.get(folder_id)
+        while current is not None:
+            parts.append(current.name)
+            current = folders.get(current.parent_id)
+        return "/".join(reversed(parts)) if parts else "根目录"
+
     def _schedule_persona_wait(
         self,
         event: AstrMessageEvent,
@@ -517,10 +532,18 @@ class PersonaPlus(Star):
 
         begin_dialogs = persona.begin_dialogs or []
         tools = persona.tools
+        skills = persona.skills
+        folder_path = await self._get_folder_path_by_id(
+            getattr(persona, "folder_id", None)
+        )
+        sort_order = getattr(persona, "sort_order", 0)
+        custom_error_message = getattr(persona, "custom_error_message", None)
 
         lines = [
             f"人格 {persona.persona_id}",
             "----------------",
+            f"文件夹：{folder_path}",
+            f"排序：{sort_order}",
             "System Prompt:",
             persona.system_prompt,
         ]
@@ -537,6 +560,17 @@ class PersonaPlus(Star):
             lines.append("\n工具：已禁用所有工具")
         else:
             lines.append("\n工具：" + ", ".join(tools))
+
+        if skills is None:
+            lines.append("\nSkills：使用全部可用 Skills")
+        elif len(skills) == 0:
+            lines.append("\nSkills：已禁用所有 Skills")
+        else:
+            lines.append("\nSkills：" + ", ".join(skills))
+
+        if custom_error_message:
+            lines.append("\n自定义错误回复：")
+            lines.append(custom_error_message)
 
         yield event.plain_result("\n".join(lines))
 
