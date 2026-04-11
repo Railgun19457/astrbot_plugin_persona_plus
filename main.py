@@ -109,8 +109,78 @@ class PersonaPlus(Star):
         """将用户传入的全部文本作为 system_prompt"""
         return raw_text, []
 
+    @staticmethod
+    def _normalize_persona_reference(persona_reference: str) -> str:
+        return persona_reference.strip().replace("\\", "/").strip("/")
+
+    @staticmethod
+    def _split_persona_reference(persona_reference: str) -> tuple[list[str], str]:
+        normalized = PersonaPlus._normalize_persona_reference(persona_reference)
+        if not normalized:
+            raise ValueError("人格 ID 不能为空。")
+
+        parts = [part for part in normalized.split("/") if part]
+        if not parts:
+            raise ValueError("人格 ID 不能为空。")
+
+        return parts[:-1], parts[-1]
+
+    async def _find_folder_id_by_path(self, folder_parts: list[str]) -> str | None:
+        if not folder_parts:
+            return None
+
+        folder_tree = await self.persona_mgr.get_folder_tree()
+
+        def walk(nodes: list[dict], remaining: list[str]) -> str | None:
+            if not remaining:
+                return None
+
+            target = remaining[0]
+            for node in nodes:
+                if node.get("name") != target:
+                    continue
+                if len(remaining) == 1:
+                    return node.get("folder_id")
+                found = walk(node.get("children", []), remaining[1:])
+                if found is not None:
+                    return found
+            return None
+
+        folder_id = walk(folder_tree, folder_parts)
+        if folder_id is None:
+            raise ValueError(f"未找到文件夹路径：{'/'.join(folder_parts)}")
+        return folder_id
+
+    async def _resolve_persona_reference(
+        self,
+        persona_reference: str,
+        *,
+        require_existing: bool,
+    ) -> tuple[str | None, str]:
+        folder_parts, persona_id = self._split_persona_reference(persona_reference)
+        folder_id = await self._find_folder_id_by_path(folder_parts)
+
+        if not require_existing:
+            return folder_id, persona_id
+
+        try:
+            persona = await self.persona_mgr.get_persona(persona_id)
+        except ValueError as exc:
+            if folder_parts:
+                raise ValueError(f"未找到人格：{persona_reference}") from exc
+            raise
+
+        if folder_id is not None and getattr(persona, "folder_id", None) != folder_id:
+            raise ValueError(f"未找到人格：{persona_reference}")
+
+        return folder_id, persona_id
+
     def _schedule_persona_wait(
-        self, event: AstrMessageEvent, persona_id: str, mode: str
+        self,
+        event: AstrMessageEvent,
+        persona_id: str,
+        mode: str,
+        folder_id: str | None = None,
     ) -> None:
         def register_task(task: asyncio.Task) -> None:
             self._tasks.add(task)
@@ -127,6 +197,7 @@ class PersonaPlus(Star):
                 system_prompt=system_prompt,
                 begin_dialogs=begin_dialogs,
                 tools=tools,
+                folder_id=folder_id,
             )
 
         async def update_persona(
@@ -159,6 +230,7 @@ class PersonaPlus(Star):
         persona_id: str,
         system_prompt: str,
         begin_dialogs: list | None,
+        folder_id: str | None = None,
         tools: list | None = None,
     ):
         """创建新人格"""
@@ -169,6 +241,7 @@ class PersonaPlus(Star):
                 persona_id=persona_id,
                 system_prompt=system_prompt,
                 begin_dialogs=begin_dialogs if begin_dialogs else None,
+                folder_id=folder_id,
                 tools=tools,
             )
             logger.info("Persona+ 已创建人格 %s", persona_id)
@@ -185,12 +258,20 @@ class PersonaPlus(Star):
     ) -> MessageEventResult | None:
         """切换对话或配置中的默认人格。"""
 
+        _, resolved_persona_id = await self._resolve_persona_reference(
+            persona_id,
+            require_existing=True,
+        )
+
+        if announce is None and self.auto_switch_announce:
+            announce = f"已切换人格为 {resolved_persona_id}"
+
         return await switch_persona(
             context=self.context,
             persona_mgr=self.persona_mgr,
             qq_sync=self.qq_sync,
             event=event,
-            persona_id=persona_id,
+            persona_id=resolved_persona_id,
             scope=self.auto_switch_scope,
             clear_context_on_switch=self.clear_context_on_switch,
             announce=announce,
@@ -244,19 +325,15 @@ class PersonaPlus(Star):
             yield event.plain_result(err_msg)
             return
 
+        announce = None
+
         try:
-            await self.persona_mgr.get_persona(persona_id)
+            result = await self._switch_persona(
+                event, persona_id=persona_id, announce=announce
+            )
         except ValueError as exc:
             yield event.plain_result(str(exc))
             return
-
-        announce = None
-        if self.auto_switch_announce:
-            announce = f"已切换人格为 {persona_id}"
-
-        result = await self._switch_persona(
-            event, persona_id=persona_id, announce=announce
-        )
         if result is not None:
             yield result
             event.stop_event()
@@ -278,16 +355,17 @@ class PersonaPlus(Star):
 
         sections = [
             "Persona+ 扩展指令(/persona_plus /pp /persona+ 可用)：",
-            "- /persona_plus 人格ID — 切换到指定人格",
+            "- /persona_plus 人格ID 或 文件夹/人格ID — 切换到指定人格",
             "- /persona_plus help — 查看帮助与配置说明",
             "- /persona_plus list — 列出所有人格",
-            "- /persona_plus view <persona_id> — 查看人格详情",
-            "- /persona_plus create <persona_id> — 创建新人格，随后发送文本内容或上传文本文件",
-            "- /persona_plus update <persona_id> — 更新人格，随后发送文本内容或上传文本文件",
-            "- /persona_plus avatar <persona_id> — 上传人格头像，随后发送图片",
-            "- /persona_plus delete <persona_id> — 删除人格 (管理员)",
+            "- /persona_plus view <人格ID 或 文件夹/人格ID> — 查看人格详情",
+            "- /persona_plus create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
+            "- /persona_plus update <人格ID 或 文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
+            "- /persona_plus avatar <人格ID 或 文件夹/人格ID> — 上传人格头像，随后发送图片",
+            "- /persona_plus delete <人格ID 或 文件夹/人格ID> — 删除人格 (管理员)",
             "",
             "提示：创建/更新/头像上传时，只会接收最初发起指令的用户后续发送内容。",
+            "提示：文件夹路径使用 / 分隔，例如：/persona_plus create 测试人格/测试。",
             "提示：创建/更新人格时，可以直接发送文本，或上传 .txt/.md 等文本文件。",
         ]
         yield event.plain_result("\n".join(sections))
@@ -325,7 +403,11 @@ class PersonaPlus(Star):
             return
 
         try:
-            persona = await self.persona_mgr.get_persona(persona_id)
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_id,
+                require_existing=True,
+            )
+            persona = await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError as exc:
             yield event.plain_result(str(exc))
             return
@@ -365,13 +447,17 @@ class PersonaPlus(Star):
             return
 
         try:
-            await self.persona_mgr.delete_persona(persona_id)
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_id,
+                require_existing=True,
+            )
+            await self.persona_mgr.delete_persona(resolved_persona_id)
         except ValueError as exc:
             yield event.plain_result(str(exc))
             return
 
-        self.qq_sync.delete_avatar(persona_id)
-        yield event.plain_result(f"人格 {persona_id} 已删除。")
+        self.qq_sync.delete_avatar(resolved_persona_id)
+        yield event.plain_result(f"人格 {resolved_persona_id} 已删除。")
 
     @persona_plus.command("create")
     async def cmd_create(self, event: AstrMessageEvent, persona_id: str):
@@ -383,17 +469,31 @@ class PersonaPlus(Star):
             return
 
         try:
-            await self.persona_mgr.get_persona(persona_id)
+            _folder_id, resolved_persona_id = await self._resolve_persona_reference(
+                persona_id,
+                require_existing=False,
+            )
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+
+        try:
+            await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError:
             pass
         else:
             yield event.plain_result(
-                f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
+                f"人格 {resolved_persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
             )
             return
 
         yield event.plain_result("请发送人格内容(文本消息或文本文件)")
-        self._schedule_persona_wait(event, persona_id, "create")
+        self._schedule_persona_wait(
+            event,
+            resolved_persona_id,
+            "create",
+            folder_id=_folder_id,
+        )
         return
 
     @persona_plus.command("avatar")
@@ -406,13 +506,17 @@ class PersonaPlus(Star):
             return
 
         try:
-            await self.persona_mgr.get_persona(persona_id)
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_id,
+                require_existing=True,
+            )
+            await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError:
             yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
             return
 
         yield event.plain_result("请发送人格头像图片")
-        self._schedule_persona_wait(event, persona_id, "avatar")
+        self._schedule_persona_wait(event, resolved_persona_id, "avatar")
         return
 
     @persona_plus.command("update")
@@ -425,13 +529,17 @@ class PersonaPlus(Star):
             return
 
         try:
-            await self.persona_mgr.get_persona(persona_id)
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_id,
+                require_existing=True,
+            )
+            await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError:
             yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
             return
 
         yield event.plain_result("请发送新的人格内容(文本消息或文本文件)")
-        self._schedule_persona_wait(event, persona_id, "update")
+        self._schedule_persona_wait(event, resolved_persona_id, "update")
         return
 
     # ==================== 自动切换监听 ====================
@@ -448,14 +556,16 @@ class PersonaPlus(Star):
         announce = None
         if mapping.reply_template:
             announce = mapping.reply_template.format(persona_id=mapping.persona_id)
-        elif self.auto_switch_announce:
-            announce = f"已切换人格为 {mapping.persona_id}"
 
-        result = await self._switch_persona(
-            event,
-            persona_id=mapping.persona_id,
-            announce=announce,
-        )
+        try:
+            result = await self._switch_persona(
+                event,
+                persona_id=mapping.persona_id,
+                announce=announce,
+            )
+        except ValueError as exc:
+            logger.warning("Persona+ 关键词自动切换失败：%s", exc)
+            return
         if result is not None:
             yield result
 

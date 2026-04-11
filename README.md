@@ -11,11 +11,12 @@
 - 支持为人格上传头像，并在切换人格时同步切换QQ昵称和头像
 - 切换人格时可选择自动清空当前会话上下文
 - 创建/更新/头像上传流程会绑定最初发起指令的用户，避免同会话内被其他用户打断
+- 支持高版本 AstrBot 的文件夹式人格路径，例如 `测试人格/测试`
 
 ### 命令
 (命令组：`/persona_plus`，别名：`/pp`、`/persona+`)
 
-- 快捷切换：`/pp <persona_id>`
+- 快捷切换：`/pp <persona_id>` 或 `/pp <文件夹/人格ID>`
   - 切换当前会话的人格，示例：`/pp assistant_v2`
   
 - `/persona_plus help`
@@ -27,7 +28,7 @@
 - `/persona_plus view <persona_id>`
   - 查看指定人格的 System Prompt、预设对话与工具配置
 
-- `/persona_plus create <persona_id>`
+- `/persona_plus create <文件夹/人格ID>`
   - 创建新人格。发送此命令后，请直接在聊天中发送要作为 System Prompt 的文本，或者文本文件(推荐md/txt)
 
 - `/persona_plus update <persona_id>`
@@ -47,6 +48,7 @@
 
 - 关键词与人格切换映射列表(keyword_mappings)
   - 每行一个`关键词:人格ID`，使用英文冒号分隔
+  - 人格 ID 也可以填写文件夹路径，例如 `关键词:测试人格/测试`
   
 - 切换作用范围(auto_switch_scope)
   - 人格切换生效范围：`conversation`、`session` 或 `global`。
