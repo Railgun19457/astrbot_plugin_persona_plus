@@ -110,7 +110,9 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
     elif isinstance(admin_commands_raw, dict):
         # 支持旧格式：{"command": True/False}，仅保留值为 True 的指令。
         admin_commands = _normalize_str_set(
-            command for command, required in admin_commands_raw.items() if bool(required)
+            command
+            for command, required in admin_commands_raw.items()
+            if bool(required)
         )
     else:
         logger.warning(

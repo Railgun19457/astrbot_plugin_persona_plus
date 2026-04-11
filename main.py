@@ -329,7 +329,9 @@ class PersonaPlus(Star):
             await self.persona_mgr.get_persona(persona_id)
         except ValueError:
             return
-        raise ValueError(f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。")
+        raise ValueError(
+            f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
+        )
 
     async def _switch_persona(
         self,
@@ -693,18 +695,19 @@ class PersonaPlus(Star):
         cmd_alias_plus = f"{prefix}persona+"
 
         sections = [
-            f"Persona+ 扩展指令({cmd_base} / {cmd_alias_pp} / {cmd_alias_plus} 可用)：",
-            f"- {cmd_base} 人格ID 或 文件夹/人格ID — 切换到指定人格",
-            f"- {cmd_base} help — 查看帮助与配置说明",
-            f"- {cmd_base} list [文件夹路径] — 列出所有人格或指定文件夹下的人格",
-            f"- {cmd_base} view <人格ID 或 文件夹/人格ID> — 查看人格详情",
-            f"- {cmd_base} create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
-            f"- {cmd_base} update <人格ID 或 文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
-            f"- {cmd_base} avatar <人格ID 或 文件夹/人格ID> — 上传人格头像，随后发送图片",
-            f"- {cmd_base} delete <人格ID 或 文件夹/人格ID> — 删除人格 (管理员)",
+            "Persona+ 帮助信息",
+            f"基础指令：{cmd_base}  {cmd_alias_pp}  {cmd_alias_plus}，三者等效，可互相替换",
+            f" {cmd_alias_pp} 人格ID 或 文件夹/人格ID — 切换到指定人格",
+            f" {cmd_alias_pp} help — 查看帮助与配置说明",
+            f" {cmd_alias_pp} list [文件夹路径] — 列出所有人格或指定文件夹下的人格",
+            f" {cmd_alias_pp} view <文件夹/人格ID> — 查看人格详情",
+            f" {cmd_alias_pp} create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
+            f" {cmd_alias_pp} update <文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
+            f" {cmd_alias_pp} avatar <文件夹/人格ID> — 上传人格头像，随后发送图片",
+            f" {cmd_alias_pp} delete <文件夹/人格ID> — 删除人格 (管理员)",
             "",
-            "提示：创建/更新/头像上传时，只会接收最初发起指令的用户后续发送内容。",
-            f"提示：文件夹路径使用 / 分隔，例如：{cmd_base} create 测试人格/测试。",
+            f"提示：文件夹路径使用 / 分隔，例如：{cmd_alias_pp} create 测试人格/测试。",
+            "提示：在多数情况下，可以省略文件夹路径直接使用人格 ID做为命令参数。",
             "提示：创建/更新人格时，可以直接发送文本，或上传 .txt/.md 等文本文件。",
         ]
         yield event.plain_result("\n".join(sections))
@@ -925,9 +928,7 @@ class PersonaPlus(Star):
 
         return await self._run_llm_tool(
             "create",
-            lambda: self._create_persona_by_reference(
-                persona_reference, system_prompt
-            ),
+            lambda: self._create_persona_by_reference(persona_reference, system_prompt),
             "创建人设失败，请稍后重试。",
         )
 
@@ -947,9 +948,7 @@ class PersonaPlus(Star):
 
         return await self._run_llm_tool(
             "update",
-            lambda: self._update_persona_by_reference(
-                persona_reference, system_prompt
-            ),
+            lambda: self._update_persona_by_reference(persona_reference, system_prompt),
             "更新人设失败，请稍后重试。",
         )
 

@@ -82,7 +82,9 @@ def schedule_persona_wait(
             await next_event.send(next_event.plain_result(f"{action_zh}失败：{exc}"))
         except Exception:  # noqa: BLE001
             logger.exception("%s人格时出现异常", action_zh)
-            await next_event.send(next_event.plain_result(f"{action_zh}失败：请稍后重试。"))
+            await next_event.send(
+                next_event.plain_result(f"{action_zh}失败：请稍后重试。")
+            )
         else:
             suffix = "头像上传成功。" if mode == "avatar" else f"{action_zh}成功。"
             await next_event.send(
