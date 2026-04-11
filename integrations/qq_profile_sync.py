@@ -19,6 +19,8 @@ MAX_SYNC_CACHE_SIZE = 1024
 
 
 class QQProfileSync:
+    """负责将当前人格同步到 QQ 昵称、群名片和头像。"""
+
     def __init__(self, context):
         self.context = context
         self.enabled: bool = False
@@ -33,6 +35,7 @@ class QQProfileSync:
         self.avatar_dir.mkdir(parents=True, exist_ok=True)
 
     def load_config(self, config: AstrBotConfig | None) -> None:
+        # 运行时配置仅影响同步开关和模板，不改变历史缓存。
         if not config:
             self.sync_nickname = True
             self.sync_avatar = False
@@ -62,7 +65,7 @@ class QQProfileSync:
     def format_nickname(self, persona_id: str) -> str:
         try:
             nickname = self.nickname_template.format(persona_id=persona_id)
-        except Exception as exc:  # noqa: BLE001
+        except (KeyError, ValueError, IndexError) as exc:
             logger.warning("Persona+ 昵称模板解析失败：%s，使用人格 ID", exc)
             nickname = persona_id
         return nickname[:60] if nickname else persona_id[:60]
@@ -122,6 +125,7 @@ class QQProfileSync:
         raise ValueError("暂不支持此类消息，请发送图片或图片文件。")
 
     def reset_persona_cache(self, persona_id: str) -> None:
+        # 删除人格后，清理所有记录过该人格的会话键。
         to_remove = [
             key
             for key, value in self._last_synced_persona.items()
@@ -131,6 +135,7 @@ class QQProfileSync:
             self._last_synced_persona.pop(key, None)
 
     def _remember_synced_persona(self, bot_key: str, persona_id: str) -> None:
+        # 以固定上限保留最近同步状态，避免缓存无限增长。
         self._last_synced_persona[bot_key] = persona_id
         while len(self._last_synced_persona) > MAX_SYNC_CACHE_SIZE:
             oldest_key = next(iter(self._last_synced_persona))

@@ -18,8 +18,7 @@ from .persona_io import extract_persona_from_event
 
 
 class SenderScopedSessionFilter(SessionFilter):
-    def __init__(self, _event: AstrMessageEvent) -> None:
-        pass
+    """按消息来源 + 发送者隔离等待中的会话。"""
 
     def filter(self, event: AstrMessageEvent) -> str:
         return f"{event.unified_msg_origin}:{event.get_sender_id()}"
@@ -38,6 +37,7 @@ def schedule_persona_wait(
     register_task: Callable[[asyncio.Task], None],
     session_filter: SessionFilter | None = None,
 ) -> None:
+    # 不同模式只决定输入类型与提示文案，核心等待逻辑保持一致。
     if mode == "avatar":
         accepted = (Comp.Image, Comp.File)
         action_zh = "头像上传"
@@ -72,13 +72,12 @@ def schedule_persona_wait(
                     persona_id=persona_id,
                     persona_data_dir=persona_data_dir,
                 )
-                system_prompt = raw_text
                 begin_dialogs: list = []
 
                 if mode == "create":
-                    await create_persona(persona_id, system_prompt, begin_dialogs, None)
+                    await create_persona(persona_id, raw_text, begin_dialogs, None)
                 else:
-                    await update_persona(persona_id, system_prompt, begin_dialogs)
+                    await update_persona(persona_id, raw_text, begin_dialogs)
         except ValueError as exc:
             await next_event.send(next_event.plain_result(f"{action_zh}失败：{exc}"))
         except Exception:  # noqa: BLE001

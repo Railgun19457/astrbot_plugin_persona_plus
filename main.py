@@ -20,6 +20,8 @@ from .integrations.qq_profile_sync import QQProfileSync
 
 
 class PersonaPlus(Star):
+    """Persona+ 插件主入口，负责命令、自动切换和 LLM 工具编排。"""
+
     LLM_TOOL_NAME_BY_OPTION = {
         "list": "persona_plus_list",
         "switch": "persona_plus_switch",
@@ -55,6 +57,7 @@ class PersonaPlus(Star):
         self._load_config()
 
     def _sync_llm_tools(self) -> None:
+        # 只同步本插件暴露给 LLM 的函数工具，避免影响其他插件。
         tool_mgr = self.context.get_llm_tool_manager()
         persona_plus_tool_names = set(self.LLM_TOOL_NAME_BY_OPTION.values())
         enabled_tool_names = {
@@ -158,6 +161,25 @@ class PersonaPlus(Star):
     def _parse_persona_payload(raw_text: str) -> tuple[str, list]:
         """将用户传入的全部文本作为 system_prompt。"""
         return raw_text, []
+
+    @staticmethod
+    def _safe_reply_template(reply_template: str, persona_id: str) -> str | None:
+        """安全渲染自动切换提示模板，模板非法时返回 None。"""
+
+        try:
+            return reply_template.format(persona_id=persona_id)
+        except (KeyError, ValueError, IndexError) as exc:
+            logger.warning("Persona+ 自动切换提示模板格式错误，回退默认提示：%s", exc)
+            return None
+
+    async def _run_llm_tool(self, action: str, runner, failure_message: str):
+        """统一 LLM 工具的异常处理和兜底提示。"""
+
+        try:
+            return await runner()
+        except Exception:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 %s 执行失败", action)
+            return failure_message
 
     @staticmethod
     def _normalize_persona_reference(persona_reference: str) -> str:
@@ -290,21 +312,24 @@ class PersonaPlus(Star):
         tools: list | None = None,
     ):
         """创建新人格"""
+        await self._ensure_persona_absent(persona_id)
+        await self.persona_mgr.create_persona(
+            persona_id=persona_id,
+            system_prompt=system_prompt,
+            begin_dialogs=begin_dialogs if begin_dialogs else None,
+            folder_id=folder_id,
+            tools=tools,
+        )
+        logger.info("Persona+ 已创建人格 %s", persona_id)
+
+    async def _ensure_persona_absent(self, persona_id: str) -> None:
+        """确认人格不存在，已存在则给出明确提示。"""
+
         try:
             await self.persona_mgr.get_persona(persona_id)
         except ValueError:
-            await self.persona_mgr.create_persona(
-                persona_id=persona_id,
-                system_prompt=system_prompt,
-                begin_dialogs=begin_dialogs if begin_dialogs else None,
-                folder_id=folder_id,
-                tools=tools,
-            )
-            logger.info("Persona+ 已创建人格 %s", persona_id)
-        else:
-            raise ValueError(
-                f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
-            )
+            return
+        raise ValueError(f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。")
 
     async def _switch_persona(
         self,
@@ -455,6 +480,7 @@ class PersonaPlus(Star):
         return "/".join(reversed(parts)) if parts else "根目录"
 
     async def _render_persona_list_text(self, folder_path: str | None = None) -> str:
+        # 先按文件夹分组，避免在树形渲染时反复扫描全量人格列表。
         personas = await self.persona_mgr.get_all_personas()
         if not personas:
             return "当前没有人格，请先在控制台或通过指令创建。"
@@ -574,13 +600,6 @@ class PersonaPlus(Star):
         system_prompt_text = system_prompt.strip()
         if not system_prompt_text:
             raise ValueError("system_prompt 不能为空。")
-
-        try:
-            await self.persona_mgr.get_persona(resolved_persona_id)
-        except ValueError:
-            pass
-        else:
-            raise ValueError(f"人格 {resolved_persona_id} 已存在。")
 
         await self._create_persona(
             persona_id=resolved_persona_id,
@@ -759,16 +778,6 @@ class PersonaPlus(Star):
             yield event.plain_result(str(exc))
             return
 
-        try:
-            await self.persona_mgr.get_persona(resolved_persona_id)
-        except ValueError:
-            pass
-        else:
-            yield event.plain_result(
-                f"人格 {resolved_persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
-            )
-            return
-
         yield event.plain_result("请发送人格内容(文本消息或文本文件)")
         self._schedule_persona_wait(
             event,
@@ -792,7 +801,6 @@ class PersonaPlus(Star):
                 persona_id,
                 require_existing=True,
             )
-            await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError:
             yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
             return
@@ -815,7 +823,6 @@ class PersonaPlus(Star):
                 persona_id,
                 require_existing=True,
             )
-            await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError:
             yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
             return
@@ -837,11 +844,9 @@ class PersonaPlus(Star):
 
         announce = None
         if mapping.reply_template:
-            try:
-                announce = mapping.reply_template.format(persona_id=mapping.persona_id)
-            except (KeyError, ValueError, IndexError) as exc:
-                logger.warning("Persona+ 自动切换提示模板格式错误，回退默认提示：%s", exc)
-                announce = None
+            announce = self._safe_reply_template(
+                mapping.reply_template, mapping.persona_id
+            )
 
         try:
             result = await self._switch_persona(
@@ -866,11 +871,11 @@ class PersonaPlus(Star):
             folder_path(string): 可选。文件夹路径（如 roleplay/助手组）；留空表示列出全部人设。
         """
 
-        try:
-            return await self._render_persona_list_text(folder_path or None)
-        except Exception:  # noqa: BLE001
-            logger.exception("Persona+ 函数工具 list 执行失败")
-            return "查看人设列表失败，请稍后重试。"
+        return await self._run_llm_tool(
+            "list",
+            lambda: self._render_persona_list_text(folder_path or None),
+            "查看人设列表失败，请稍后重试。",
+        )
 
     @filter.llm_tool(name="persona_plus_switch")
     async def llm_persona_plus_switch(
@@ -882,11 +887,11 @@ class PersonaPlus(Star):
             persona_reference(string): 目标人设 ID，或 文件夹/人设ID 路径。
         """
 
-        try:
-            return await self._switch_persona_by_reference(event, persona_reference)
-        except Exception:  # noqa: BLE001
-            logger.exception("Persona+ 函数工具 switch 执行失败")
-            return "切换人设失败，请稍后重试。"
+        return await self._run_llm_tool(
+            "switch",
+            lambda: self._switch_persona_by_reference(event, persona_reference),
+            "切换人设失败，请稍后重试。",
+        )
 
     @filter.llm_tool(name="persona_plus_view")
     async def llm_persona_plus_view(
@@ -898,11 +903,11 @@ class PersonaPlus(Star):
             persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
         """
 
-        try:
-            return await self._render_persona_detail_text(persona_reference)
-        except Exception:  # noqa: BLE001
-            logger.exception("Persona+ 函数工具 view 执行失败")
-            return "查看人设内容失败，请稍后重试。"
+        return await self._run_llm_tool(
+            "view",
+            lambda: self._render_persona_detail_text(persona_reference),
+            "查看人设内容失败，请稍后重试。",
+        )
 
     @filter.llm_tool(name="persona_plus_create")
     async def llm_persona_plus_create(
@@ -918,13 +923,13 @@ class PersonaPlus(Star):
             system_prompt(string): 人设完整 System Prompt 文本。
         """
 
-        try:
-            return await self._create_persona_by_reference(
+        return await self._run_llm_tool(
+            "create",
+            lambda: self._create_persona_by_reference(
                 persona_reference, system_prompt
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Persona+ 函数工具 create 执行失败")
-            return "创建人设失败，请稍后重试。"
+            ),
+            "创建人设失败，请稍后重试。",
+        )
 
     @filter.llm_tool(name="persona_plus_update")
     async def llm_persona_plus_update(
@@ -940,13 +945,13 @@ class PersonaPlus(Star):
             system_prompt(string): 新的人设 System Prompt 全量文本。
         """
 
-        try:
-            return await self._update_persona_by_reference(
+        return await self._run_llm_tool(
+            "update",
+            lambda: self._update_persona_by_reference(
                 persona_reference, system_prompt
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Persona+ 函数工具 update 执行失败")
-            return "更新人设失败，请稍后重试。"
+            ),
+            "更新人设失败，请稍后重试。",
+        )
 
     @filter.llm_tool(name="persona_plus_delete")
     async def llm_persona_plus_delete(
@@ -958,11 +963,11 @@ class PersonaPlus(Star):
             persona_reference(string): 要删除的人设 ID，或 文件夹/人设ID 路径。
         """
 
-        try:
-            return await self._delete_persona_by_reference(persona_reference)
-        except Exception:  # noqa: BLE001
-            logger.exception("Persona+ 函数工具 delete 执行失败")
-            return "删除人设失败，请稍后重试。"
+        return await self._run_llm_tool(
+            "delete",
+            lambda: self._delete_persona_by_reference(persona_reference),
+            "删除人设失败，请稍后重试。",
+        )
 
     async def terminate(self):
         """插件卸载时的清理逻辑。"""

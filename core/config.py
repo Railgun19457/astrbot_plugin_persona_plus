@@ -17,6 +17,16 @@ LLM_TOOL_OPTIONS = (
 )
 
 
+def _normalize_str_set(values) -> set[str]:
+    """将列表/字典输入压缩为去重后的字符串集合。"""
+
+    return {str(item).lower().strip() for item in values if str(item).strip()}
+
+
+def _default_admin_commands() -> set[str]:
+    return {"create", "update", "delete", "avatar"}
+
+
 @dataclass(slots=True)
 class PersonaPlusSettings:
     keyword_mappings: list[KeywordMapping]
@@ -30,6 +40,8 @@ class PersonaPlusSettings:
 
 
 def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
+    """从 AstrBot 配置中读取 Persona+ 的运行参数。"""
+
     loaded: list[KeywordMapping] = []
 
     if not config:
@@ -94,22 +106,18 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
         ["create", "update", "delete", "avatar"],
     )
     if isinstance(admin_commands_raw, list):
-        admin_commands = {
-            str(cmd).lower().strip() for cmd in admin_commands_raw if str(cmd).strip()
-        }
+        admin_commands = _normalize_str_set(admin_commands_raw)
     elif isinstance(admin_commands_raw, dict):
-        # 支持旧格式：{"command": True/False}，保留值为 True 的指令
-        admin_commands = {
-            str(command).lower().strip()
-            for command, required in admin_commands_raw.items()
-            if str(command).strip() and bool(required)
-        }
+        # 支持旧格式：{"command": True/False}，仅保留值为 True 的指令。
+        admin_commands = _normalize_str_set(
+            command for command, required in admin_commands_raw.items() if bool(required)
+        )
     else:
         logger.warning(
             "Persona+ admin_commands 配置应为列表或字典，实际收到 %r，已使用默认值",
             admin_commands_raw,
         )
-        admin_commands = {"create", "update", "delete", "avatar"}
+        admin_commands = _default_admin_commands()
 
     auto_switch_announce = bool(config.get("enable_auto_switch_announce", True))
     clear_context_on_switch = bool(config.get("clear_context_on_switch", False))
@@ -117,11 +125,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
     llm_tool_options: set[str] = set()
     if llm_tool_options_raw is not None:
         if isinstance(llm_tool_options_raw, list):
-            llm_tool_options = {
-                str(item).lower().strip()
-                for item in llm_tool_options_raw
-                if str(item).strip()
-            }
+            llm_tool_options = _normalize_str_set(llm_tool_options_raw)
         else:
             logger.warning(
                 "Persona+ llm_tool_options 配置应为列表，实际收到 %r，已忽略",
