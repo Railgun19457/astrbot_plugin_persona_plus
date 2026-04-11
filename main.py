@@ -17,6 +17,7 @@ from .core.permissions import check_permission
 from .core.session_flows import SenderScopedSessionFilter, schedule_persona_wait
 from .core.switching import switch_persona
 from .integrations.qq_profile_sync import QQProfileSync
+from .tools import build_llm_tools
 
 
 class PersonaPlus(Star):
@@ -54,6 +55,7 @@ class PersonaPlus(Star):
             StarTools.get_data_dir("astrbot_plugin_persona_plus") / "persona_files"
         )
         self.persona_data_dir.mkdir(parents=True, exist_ok=True)
+        self.context.add_llm_tools(*build_llm_tools(self))
         self._load_config()
 
     def _sync_llm_tools(self) -> None:
@@ -862,111 +864,6 @@ class PersonaPlus(Star):
             return
         if result is not None:
             yield result
-
-    # ==================== LLM 函数工具 ====================
-    @filter.llm_tool(name="persona_plus_list")
-    async def llm_persona_plus_list(
-        self, event: AstrMessageEvent, folder_path: str = ""
-    ):
-        """按文件夹范围查询可用人设列表。
-
-        Args:
-            folder_path(string): 可选。文件夹路径（如 roleplay/助手组）；留空表示列出全部人设。
-        """
-
-        return await self._run_llm_tool(
-            "list",
-            lambda: self._render_persona_list_text(folder_path or None),
-            "查看人设列表失败，请稍后重试。",
-        )
-
-    @filter.llm_tool(name="persona_plus_switch")
-    async def llm_persona_plus_switch(
-        self, event: AstrMessageEvent, persona_reference: str
-    ):
-        """切换当前会话的人设。
-
-        Args:
-            persona_reference(string): 目标人设 ID，或 文件夹/人设ID 路径。
-        """
-
-        return await self._run_llm_tool(
-            "switch",
-            lambda: self._switch_persona_by_reference(event, persona_reference),
-            "切换人设失败，请稍后重试。",
-        )
-
-    @filter.llm_tool(name="persona_plus_view")
-    async def llm_persona_plus_view(
-        self, event: AstrMessageEvent, persona_reference: str
-    ):
-        """查看单个人设的完整详情。
-
-        Args:
-            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
-        """
-
-        return await self._run_llm_tool(
-            "view",
-            lambda: self._render_persona_detail_text(persona_reference),
-            "查看人设内容失败，请稍后重试。",
-        )
-
-    @filter.llm_tool(name="persona_plus_create")
-    async def llm_persona_plus_create(
-        self,
-        event: AstrMessageEvent,
-        persona_reference: str,
-        system_prompt: str,
-    ):
-        """创建新人设并写入 system prompt。
-
-        Args:
-            persona_reference(string): 新人设 ID，或 文件夹/人设ID 路径；若文件夹不存在会自动创建。
-            system_prompt(string): 人设完整 System Prompt 文本。
-        """
-
-        return await self._run_llm_tool(
-            "create",
-            lambda: self._create_persona_by_reference(persona_reference, system_prompt),
-            "创建人设失败，请稍后重试。",
-        )
-
-    @filter.llm_tool(name="persona_plus_update")
-    async def llm_persona_plus_update(
-        self,
-        event: AstrMessageEvent,
-        persona_reference: str,
-        system_prompt: str,
-    ):
-        """更新已存在人设的 system prompt。
-
-        Args:
-            persona_reference(string): 目标人设 ID，或 文件夹/人设ID 路径。
-            system_prompt(string): 新的人设 System Prompt 全量文本。
-        """
-
-        return await self._run_llm_tool(
-            "update",
-            lambda: self._update_persona_by_reference(persona_reference, system_prompt),
-            "更新人设失败，请稍后重试。",
-        )
-
-    @filter.llm_tool(name="persona_plus_delete")
-    async def llm_persona_plus_delete(
-        self, event: AstrMessageEvent, persona_reference: str
-    ):
-        """删除指定人设（不可恢复）。
-
-        Args:
-            persona_reference(string): 要删除的人设 ID，或 文件夹/人设ID 路径。
-        """
-
-        return await self._run_llm_tool(
-            "delete",
-            lambda: self._delete_persona_by_reference(persona_reference),
-            "删除人设失败，请稍后重试。",
-        )
 
     async def terminate(self):
         """插件卸载时的清理逻辑。"""
