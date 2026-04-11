@@ -14,7 +14,7 @@ class PersonaPlusSettings:
     auto_switch_scope: str
     keyword_switch_enabled: bool
     manage_wait_timeout: int
-    admin_commands: dict[str, bool]
+    admin_commands: set[str]
     auto_switch_announce: bool
     clear_context_on_switch: bool
     enable_llm_tools: bool
@@ -30,16 +30,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
             auto_switch_scope="conversation",
             keyword_switch_enabled=True,
             manage_wait_timeout=60,
-            admin_commands={
-                "switch": False,
-                "create": True,
-                "update": True,
-                "delete": True,
-                "view": False,
-                "avatar": True,
-                "list": False,
-                "help": False,
-            },
+            admin_commands={"create", "update", "delete", "avatar"},
             auto_switch_announce=True,
             clear_context_on_switch=False,
             enable_llm_tools=False,
@@ -91,44 +82,25 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
 
     admin_commands_raw = config.get(
         "admin_commands",
-        {
-            "switch": False,
-            "create": True,
-            "update": True,
-            "delete": True,
-            "view": False,
-            "avatar": True,
-            "list": False,
-            "help": False,
-        },
+        ["create", "update", "delete", "avatar"],
     )
-    if isinstance(admin_commands_raw, dict):
+    if isinstance(admin_commands_raw, list):
         admin_commands = {
-            str(command).lower().strip(): bool(required)
-            for command, required in admin_commands_raw.items()
-            if str(command).strip()
+            str(cmd).lower().strip() for cmd in admin_commands_raw if str(cmd).strip()
         }
-    elif isinstance(admin_commands_raw, list):
+    elif isinstance(admin_commands_raw, dict):
+        # 支持旧格式：{"command": True/False}，保留值为 True 的指令
         admin_commands = {
-            str(cmd).lower().strip(): True
-            for cmd in admin_commands_raw
-            if str(cmd).strip()
+            str(command).lower().strip()
+            for command, required in admin_commands_raw.items()
+            if str(command).strip() and bool(required)
         }
     else:
         logger.warning(
-            "Persona+ admin_commands 配置应为字典，实际收到 %r，已使用默认值",
+            "Persona+ admin_commands 配置应为列表或字典，实际收到 %r，已使用默认值",
             admin_commands_raw,
         )
-        admin_commands = {
-            "switch": False,
-            "create": True,
-            "update": True,
-            "delete": True,
-            "view": False,
-            "avatar": True,
-            "list": False,
-            "help": False,
-        }
+        admin_commands = {"create", "update", "delete", "avatar"}
 
     auto_switch_announce = bool(config.get("enable_auto_switch_announce", True))
     clear_context_on_switch = bool(config.get("clear_context_on_switch", False))
