@@ -12,11 +12,6 @@ from astrbot.core.star.star_tools import StarTools
 
 from .core.config import PersonaPlusSettings, load_settings
 from .core.keyword_switch import match_keyword
-from .core.llm_tools import (
-    TOOL_NAMES,
-    clear_persona_plus_plugin,
-    set_persona_plus_plugin,
-)
 from .core.permissions import check_permission
 from .core.session_flows import SenderScopedSessionFilter, schedule_persona_wait
 from .core.switching import switch_persona
@@ -60,14 +55,6 @@ class PersonaPlus(Star):
         self.clear_context_on_switch = self.settings.clear_context_on_switch
 
         self.qq_sync.load_config(self.config)
-
-        for tool_name in TOOL_NAMES:
-            StarTools.deactivate_llm_tool(tool_name)
-        clear_persona_plus_plugin()
-        if self.settings.enable_llm_tools:
-            set_persona_plus_plugin(self)
-            for tool_name in TOOL_NAMES:
-                StarTools.activate_llm_tool(tool_name)
 
         logger.info(
             "Persona+ 配置加载完成：关键词 %d 项，自动切换范围=%s，关键词自动切换=%s，QQ同步=%s",
@@ -775,12 +762,117 @@ class PersonaPlus(Star):
         if result is not None:
             yield result
 
+    # ==================== LLM 函数工具 ====================
+    @filter.llm_tool(name="persona_plus_list")
+    async def llm_persona_plus_list(
+        self, event: AstrMessageEvent, folder_path: str = ""
+    ):
+        """查看人设列表。
+
+        Args:
+            folder_path(string): 可选的文件夹路径；留空表示列出全部人设。
+        """
+
+        try:
+            return await self._render_persona_list_text(folder_path or None)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 list 执行失败")
+            return f"查看人设列表失败：{exc}"
+
+    @filter.llm_tool(name="persona_plus_switch")
+    async def llm_persona_plus_switch(
+        self, event: AstrMessageEvent, persona_reference: str
+    ):
+        """切换人设。
+
+        Args:
+            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+        """
+
+        try:
+            return await self._switch_persona_by_reference(event, persona_reference)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 switch 执行失败")
+            return f"切换人设失败：{exc}"
+
+    @filter.llm_tool(name="persona_plus_view")
+    async def llm_persona_plus_view(
+        self, event: AstrMessageEvent, persona_reference: str
+    ):
+        """查看人设内容。
+
+        Args:
+            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+        """
+
+        try:
+            return await self._render_persona_detail_text(persona_reference)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 view 执行失败")
+            return f"查看人设内容失败：{exc}"
+
+    @filter.llm_tool(name="persona_plus_create")
+    async def llm_persona_plus_create(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+        system_prompt: str,
+    ):
+        """创建人设。
+
+        Args:
+            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+            system_prompt(string): 人设的 System Prompt。
+        """
+
+        try:
+            return await self._create_persona_by_reference(
+                persona_reference, system_prompt
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 create 执行失败")
+            return f"创建人设失败：{exc}"
+
+    @filter.llm_tool(name="persona_plus_update")
+    async def llm_persona_plus_update(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+        system_prompt: str,
+    ):
+        """更新人设。
+
+        Args:
+            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+            system_prompt(string): 新的人设 System Prompt。
+        """
+
+        try:
+            return await self._update_persona_by_reference(
+                persona_reference, system_prompt
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 update 执行失败")
+            return f"更新人设失败：{exc}"
+
+    @filter.llm_tool(name="persona_plus_delete")
+    async def llm_persona_plus_delete(
+        self, event: AstrMessageEvent, persona_reference: str
+    ):
+        """删除人设。
+
+        Args:
+            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+        """
+
+        try:
+            return await self._delete_persona_by_reference(persona_reference)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Persona+ 函数工具 delete 执行失败")
+            return f"删除人设失败：{exc}"
+
     async def terminate(self):
         """插件卸载时的清理逻辑。"""
-
-        for tool_name in TOOL_NAMES:
-            StarTools.deactivate_llm_tool(tool_name)
-        clear_persona_plus_plugin()
 
         for task in list(self._tasks):
             task.cancel()

@@ -55,11 +55,11 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
         entries = mappings_raw.splitlines()
     else:
         logger.warning(
-            "Persona+ 关键词配置应为列表，实际收到 %r (类型 %s)",
+            "Persona+ 关键词配置应为列表或文本，实际收到 %r (类型 %s)，尝试转换",
             mappings_raw,
             type(mappings_raw).__name__,
         )
-        entries = str(mappings_raw).splitlines()
+        entries = [str(mappings_raw)] if str(mappings_raw).strip() else []
 
     for raw_entry in entries:
         if isinstance(raw_entry, dict):
