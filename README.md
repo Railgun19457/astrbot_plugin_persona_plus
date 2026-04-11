@@ -22,8 +22,8 @@
 - `/persona_plus help`
   - 显示帮助与命令说明
 
-- `/persona_plus list`
-  - 列出所有已注册的人格
+- `/persona_plus list [文件夹路径]`
+  - 列出所有已注册的人格，或指定文件夹下的人格树
 
 - `/persona_plus view <persona_id>`
   - 查看指定人格的 System Prompt、预设对话与工具配置

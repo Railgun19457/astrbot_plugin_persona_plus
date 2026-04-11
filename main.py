@@ -156,6 +156,57 @@ class PersonaPlus(Star):
 
         return folder_id
 
+    @staticmethod
+    def _find_folder_tree_node(folder_tree: list[dict], folder_id: str) -> dict | None:
+        for node in folder_tree:
+            if node.get("folder_id") == folder_id:
+                return node
+            matched = PersonaPlus._find_folder_tree_node(
+                node.get("children", []),
+                folder_id,
+            )
+            if matched is not None:
+                return matched
+        return None
+
+    @staticmethod
+    def _build_folder_tree_output(
+        folder_tree: list[dict],
+        all_personas: list,
+        depth: int = 0,
+    ) -> list[str]:
+        lines: list[str] = []
+        prefix = "│ " * depth
+
+        for folder in folder_tree:
+            lines.append(f"{prefix}├ 📁 {folder['name']}/")
+
+            folder_personas = [
+                persona
+                for persona in all_personas
+                if persona.folder_id == folder["folder_id"]
+            ]
+            child_prefix = "│ " * (depth + 1)
+
+            for persona in folder_personas:
+                tool_cnt = "ALL" if persona.tools is None else len(persona.tools)
+                skill_cnt = "ALL" if persona.skills is None else len(persona.skills)
+                lines.append(
+                    f"{child_prefix}├ 👤 {persona.persona_id} | 工具: {tool_cnt} | Skills: {skill_cnt}"
+                )
+
+            children = folder.get("children", [])
+            if children:
+                lines.extend(
+                    PersonaPlus._build_folder_tree_output(
+                        children,
+                        all_personas,
+                        depth + 1,
+                    )
+                )
+
+        return lines
+
     async def _resolve_persona_reference(
         self,
         persona_reference: str,
@@ -366,7 +417,7 @@ class PersonaPlus(Star):
             "Persona+ 扩展指令(/persona_plus /pp /persona+ 可用)：",
             "- /persona_plus 人格ID 或 文件夹/人格ID — 切换到指定人格",
             "- /persona_plus help — 查看帮助与配置说明",
-            "- /persona_plus list — 列出所有人格",
+            "- /persona_plus list [文件夹路径] — 列出所有人格或指定文件夹下的人格",
             "- /persona_plus view <人格ID 或 文件夹/人格ID> — 查看人格详情",
             "- /persona_plus create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
             "- /persona_plus update <人格ID 或 文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
@@ -380,7 +431,7 @@ class PersonaPlus(Star):
         yield event.plain_result("\n".join(sections))
 
     @persona_plus.command("list")
-    async def cmd_list(self, event: AstrMessageEvent):
+    async def cmd_list(self, event: AstrMessageEvent, folder_path: str | None = None):
         """列出所有已注册人格。"""
 
         has_perm, err_msg = self.check_permission(event, "list")
@@ -393,13 +444,56 @@ class PersonaPlus(Star):
             yield event.plain_result("当前没有人格，请先在控制台或通过指令创建。")
             return
 
-        lines = ["已载入人格："]
-        for persona in personas:
-            begin_cnt = len(persona.begin_dialogs or [])
-            tool_cnt = len(persona.tools or []) if persona.tools is not None else "ALL"
-            lines.append(
-                f"- {persona.persona_id} | 预设对话: {begin_cnt} | 工具: {tool_cnt}"
-            )
+        folder_tree = await self.persona_mgr.get_folder_tree()
+        target_tree = folder_tree
+        header = "已载入人格："
+
+        if folder_path:
+            normalized_folder_path = folder_path.strip().replace("\\", "/").strip("/")
+            try:
+                folder_parts = [
+                    part for part in normalized_folder_path.split("/") if part
+                ]
+                folder_id = await self._find_folder_id_by_path(folder_parts)
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+
+            folder_node = self._find_folder_tree_node(folder_tree, folder_id)
+            if folder_node is None:
+                yield event.plain_result(f"未找到文件夹路径：{folder_path}")
+                return
+
+            target_tree = [folder_node]
+            header = f"文件夹 {normalized_folder_path or '根目录'} 下的人格："
+
+        lines = [header]
+        tree_lines = self._build_folder_tree_output(target_tree, personas)
+        if tree_lines:
+            lines.extend(tree_lines)
+        elif not folder_path:
+            lines.append("- 当前没有已组织的文件夹人格")
+
+        if not folder_path:
+            root_personas = [p for p in personas if p.folder_id is None]
+            if root_personas:
+                if tree_lines:
+                    lines.append("")
+                for persona in root_personas:
+                    begin_cnt = len(persona.begin_dialogs or [])
+                    tool_cnt = (
+                        len(persona.tools or []) if persona.tools is not None else "ALL"
+                    )
+                    skill_cnt = (
+                        len(persona.skills or [])
+                        if persona.skills is not None
+                        else "ALL"
+                    )
+                    lines.append(
+                        f"👤 {persona.persona_id} | 预设对话: {begin_cnt} | 工具: {tool_cnt} | Skills: {skill_cnt}"
+                    )
+
+        lines.append(f"\n共 {len(personas)} 个人格")
         yield event.plain_result("\n".join(lines))
 
     @persona_plus.command("view")
