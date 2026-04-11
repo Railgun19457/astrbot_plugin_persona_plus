@@ -10,6 +10,8 @@ from astrbot.api.event import AstrMessageEvent
 
 from .message_utils import first_component_of_types, has_component_of_types
 
+MAX_PERSONA_FILE_SIZE = 2 * 1024 * 1024
+
 
 async def download_and_parse_persona_file(
     *,
@@ -28,6 +30,11 @@ async def download_and_parse_persona_file(
         raise ValueError("文件获取失败，请重新发送。")
 
     src = Path(temp_path)
+    file_size = src.stat().st_size
+    if file_size > MAX_PERSONA_FILE_SIZE:
+        raise ValueError(
+            f"文件过大（{file_size} 字节），请控制在 {MAX_PERSONA_FILE_SIZE} 字节以内。"
+        )
 
     async with aiofiles.open(src, "rb") as src_fp:
         raw_data = await src_fp.read()

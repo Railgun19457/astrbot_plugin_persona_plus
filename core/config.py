@@ -128,7 +128,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
                 llm_tool_options_raw,
             )
 
-    # Backward compatibility for old bool switch.
+    # 兼容旧配置：布尔开关 enable_llm_tools
     if llm_tool_options_raw is None and bool(config.get("enable_llm_tools", False)):
         llm_tool_options = set(LLM_TOOL_OPTIONS)
 

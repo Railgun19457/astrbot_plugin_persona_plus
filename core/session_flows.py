@@ -81,9 +81,9 @@ def schedule_persona_wait(
                     await update_persona(persona_id, system_prompt, begin_dialogs)
         except ValueError as exc:
             await next_event.send(next_event.plain_result(f"{action_zh}失败：{exc}"))
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("%s人格时出现异常", action_zh)
-            await next_event.send(next_event.plain_result(f"{action_zh}失败：{exc}"))
+            await next_event.send(next_event.plain_result(f"{action_zh}失败：请稍后重试。"))
         else:
             suffix = "头像上传成功。" if mode == "avatar" else f"{action_zh}成功。"
             await next_event.send(
@@ -105,9 +105,9 @@ def schedule_persona_wait(
                 else "等待人格内容超时，操作已取消。"
             )
             await event.send(event.plain_result(msg))
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("%s等待流程异常", action_zh)
-            await event.send(event.plain_result(f"{action_zh}流程异常：{exc}"))
+            await event.send(event.plain_result(f"{action_zh}流程异常，请稍后重试。"))
 
     task = asyncio.create_task(run_wait())
     register_task(task)

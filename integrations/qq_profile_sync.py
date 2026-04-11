@@ -15,6 +15,8 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 from astrbot.core.star.star_tools import StarTools
 
+MAX_SYNC_CACHE_SIZE = 1024
+
 
 class QQProfileSync:
     def __init__(self, context):
@@ -128,6 +130,12 @@ class QQProfileSync:
         for key in to_remove:
             self._last_synced_persona.pop(key, None)
 
+    def _remember_synced_persona(self, bot_key: str, persona_id: str) -> None:
+        self._last_synced_persona[bot_key] = persona_id
+        while len(self._last_synced_persona) > MAX_SYNC_CACHE_SIZE:
+            oldest_key = next(iter(self._last_synced_persona))
+            self._last_synced_persona.pop(oldest_key, None)
+
     def delete_avatar(self, persona_id: str) -> None:
         avatar_path = self.get_avatar_path(persona_id)
         if avatar_path.exists():
@@ -183,8 +191,8 @@ class QQProfileSync:
                         await self._apply_qq_avatar(event, avatar_path)
                         logger.debug("Persona+ 已同步头像 %s", avatar_path.as_posix())
                         avatar_synced = True
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("Persona+ 同步头像失败：%s", exc)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Persona+ 同步头像失败")
                 else:
                     logger.warning(
                         "Persona+ 当前适配器未实现 set_qq_avatar 接口，跳过头像同步。"
@@ -195,7 +203,7 @@ class QQProfileSync:
                 )
 
         if nickname_applied or avatar_synced:
-            self._last_synced_persona[bot_key] = persona_id
+            self._remember_synced_persona(bot_key, persona_id)
 
     async def _apply_qq_avatar(
         self, event: AiocqhttpMessageEvent, avatar_path: Path
@@ -223,8 +231,8 @@ class QQProfileSync:
                 await event.bot.set_qq_profile(nickname=nickname)
                 logger.debug("Persona+ 已同步 QQ 昵称为 %s", nickname)
                 return True
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Persona+ 同步 QQ 昵称失败：%s", exc)
+            except Exception:  # noqa: BLE001
+                logger.exception("Persona+ 同步 QQ 昵称失败")
         else:
             logger.warning(
                 "Persona+ 当前适配器未实现 set_qq_profile 接口，跳过 QQ 昵称同步。"
@@ -247,8 +255,8 @@ class QQProfileSync:
                 )
                 logger.debug("Persona+ 已同步群名片为 %s (群 %s)", card, group_id)
                 return True
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Persona+ 同步群名片失败：%s", exc)
+            except Exception:  # noqa: BLE001
+                logger.exception("Persona+ 同步群名片失败")
         else:
             logger.warning(
                 "Persona+ 当前适配器未实现 call_action 接口，跳过群名片同步。"

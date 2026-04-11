@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from pathlib import Path
 
 from astrbot.api import logger
@@ -196,8 +197,18 @@ class PersonaPlus(Star):
             require_existing=True,
         )
         await self.persona_mgr.delete_persona(resolved_persona_id)
-        self.qq_sync.delete_avatar(resolved_persona_id)
+        self._delete_persona_artifacts(resolved_persona_id)
         return f"人格 {resolved_persona_id} 已删除。"
+
+    def _delete_persona_artifacts(self, persona_id: str) -> None:
+        self.qq_sync.delete_avatar(persona_id)
+        persona_file = self.persona_data_dir / f"{persona_id}.txt"
+        if persona_file.exists():
+            try:
+                persona_file.unlink()
+                logger.info("Persona+ 已删除人格 %s 的文本缓存", persona_id)
+            except OSError as exc:
+                logger.warning("Persona+ 删除人格 %s 文本缓存失败：%s", persona_id, exc)
 
     async def _switch_persona_by_reference(
         self,
@@ -369,7 +380,7 @@ class PersonaPlus(Star):
     @staticmethod
     def _build_folder_tree_output(
         folder_tree: list[dict],
-        all_personas: list,
+        personas_by_folder: dict[str, list],
         depth: int = 0,
     ) -> list[str]:
         lines: list[str] = []
@@ -378,11 +389,7 @@ class PersonaPlus(Star):
         for folder in folder_tree:
             lines.append(f"{prefix}├ 📁 {folder['name']}/")
 
-            folder_personas = [
-                persona
-                for persona in all_personas
-                if persona.folder_id == folder["folder_id"]
-            ]
+            folder_personas = personas_by_folder.get(folder["folder_id"], [])
             child_prefix = "│ " * (depth + 1)
 
             for persona in folder_personas:
@@ -397,7 +404,7 @@ class PersonaPlus(Star):
                 lines.extend(
                     PersonaPlus._build_folder_tree_output(
                         children,
-                        all_personas,
+                        personas_by_folder,
                         depth + 1,
                     )
                 )
@@ -467,8 +474,14 @@ class PersonaPlus(Star):
             target_tree = [folder_node]
             header = f"文件夹 {normalized_folder_path or '根目录'} 下的人格："
 
+        personas_by_folder: dict[str, list] = defaultdict(list)
+        for persona in personas:
+            folder_id = getattr(persona, "folder_id", None)
+            if folder_id:
+                personas_by_folder[folder_id].append(persona)
+
         lines = [header]
-        tree_lines = self._build_folder_tree_output(target_tree, personas)
+        tree_lines = self._build_folder_tree_output(target_tree, personas_by_folder)
         if tree_lines:
             lines.extend(tree_lines)
         elif not folder_path:
@@ -724,7 +737,7 @@ class PersonaPlus(Star):
             yield event.plain_result(str(exc))
             return
 
-        self.qq_sync.delete_avatar(resolved_persona_id)
+        self._delete_persona_artifacts(resolved_persona_id)
         yield event.plain_result(f"人格 {resolved_persona_id} 已删除。")
 
     @persona_plus.command("create")
@@ -824,7 +837,11 @@ class PersonaPlus(Star):
 
         announce = None
         if mapping.reply_template:
-            announce = mapping.reply_template.format(persona_id=mapping.persona_id)
+            try:
+                announce = mapping.reply_template.format(persona_id=mapping.persona_id)
+            except (KeyError, ValueError, IndexError) as exc:
+                logger.warning("Persona+ 自动切换提示模板格式错误，回退默认提示：%s", exc)
+                announce = None
 
         try:
             result = await self._switch_persona(
@@ -851,9 +868,9 @@ class PersonaPlus(Star):
 
         try:
             return await self._render_persona_list_text(folder_path or None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 list 执行失败")
-            return f"查看人设列表失败：{exc}"
+            return "查看人设列表失败，请稍后重试。"
 
     @filter.llm_tool(name="persona_plus_switch")
     async def llm_persona_plus_switch(
@@ -867,9 +884,9 @@ class PersonaPlus(Star):
 
         try:
             return await self._switch_persona_by_reference(event, persona_reference)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 switch 执行失败")
-            return f"切换人设失败：{exc}"
+            return "切换人设失败，请稍后重试。"
 
     @filter.llm_tool(name="persona_plus_view")
     async def llm_persona_plus_view(
@@ -883,9 +900,9 @@ class PersonaPlus(Star):
 
         try:
             return await self._render_persona_detail_text(persona_reference)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 view 执行失败")
-            return f"查看人设内容失败：{exc}"
+            return "查看人设内容失败，请稍后重试。"
 
     @filter.llm_tool(name="persona_plus_create")
     async def llm_persona_plus_create(
@@ -905,9 +922,9 @@ class PersonaPlus(Star):
             return await self._create_persona_by_reference(
                 persona_reference, system_prompt
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 create 执行失败")
-            return f"创建人设失败：{exc}"
+            return "创建人设失败，请稍后重试。"
 
     @filter.llm_tool(name="persona_plus_update")
     async def llm_persona_plus_update(
@@ -927,9 +944,9 @@ class PersonaPlus(Star):
             return await self._update_persona_by_reference(
                 persona_reference, system_prompt
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 update 执行失败")
-            return f"更新人设失败：{exc}"
+            return "更新人设失败，请稍后重试。"
 
     @filter.llm_tool(name="persona_plus_delete")
     async def llm_persona_plus_delete(
@@ -943,9 +960,9 @@ class PersonaPlus(Star):
 
         try:
             return await self._delete_persona_by_reference(persona_reference)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 delete 执行失败")
-            return f"删除人设失败：{exc}"
+            return "删除人设失败，请稍后重试。"
 
     async def terminate(self):
         """插件卸载时的清理逻辑。"""
