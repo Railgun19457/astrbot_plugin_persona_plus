@@ -64,9 +64,11 @@
   - 默认启用管理员权限的指令：create、update、delete、avatar
   - 默认普通用户可用的指令：switch、view、list、help
 
-- 启用函数工具(enable_llm_tools)
-  - 开启后会向 LLM 暴露人格列表、查看、切换、创建、更新、删除等函数工具
-  - 默认: false
+- 函数工具选项(llm_tool_options)
+  - 使用列表细分控制向 LLM 暴露的人格函数工具
+  - 可选值：`list`、`switch`、`view`、`create`、`update`、`delete`
+  - 默认：`[]`（不暴露函数工具）
+  - 兼容旧配置：若仍使用 `enable_llm_tools=true` 且未设置 `llm_tool_options`，会自动启用全部选项
 
 - 切换提示(enable_auto_switch_announce)
   - 切换人格时，是否发送提示

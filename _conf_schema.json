@@ -35,11 +35,12 @@
     "options": ["switch", "create", "update", "delete", "view", "list", "help", "avatar"],
     "default": ["create", "update", "delete", "avatar"]
   },
-  "enable_llm_tools": {
-    "description": "启用函数工具",
-    "hint": "开启后会向 LLM 暴露人格列表、查看、切换、创建、更新、删除等函数工具。",
-    "type": "bool",
-    "default": false
+  "llm_tool_options": {
+    "description": "函数工具选项",
+    "hint": "细分控制向 LLM 暴露的人格管理函数工具。未勾选的工具不会暴露。",
+    "type": "list",
+    "options": ["list", "switch", "view", "create", "update", "delete"],
+    "default": []
   },
   "enable_auto_switch_announce": {
     "description": "切换提示",

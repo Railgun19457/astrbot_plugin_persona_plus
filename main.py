@@ -19,6 +19,15 @@ from .integrations.qq_profile_sync import QQProfileSync
 
 
 class PersonaPlus(Star):
+    LLM_TOOL_NAME_BY_OPTION = {
+        "list": "persona_plus_list",
+        "switch": "persona_plus_switch",
+        "view": "persona_plus_view",
+        "create": "persona_plus_create",
+        "update": "persona_plus_update",
+        "delete": "persona_plus_delete",
+    }
+
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.context: Context = context
@@ -33,6 +42,7 @@ class PersonaPlus(Star):
         self.admin_commands: set[str] = set()
         self.auto_switch_announce = True
         self.clear_context_on_switch = False
+        self.llm_tool_options: set[str] = set()
 
         self.qq_sync = QQProfileSync(context)
         self._tasks: set[asyncio.Task] = set()
@@ -42,6 +52,27 @@ class PersonaPlus(Star):
         )
         self.persona_data_dir.mkdir(parents=True, exist_ok=True)
         self._load_config()
+
+    def _sync_llm_tools(self) -> None:
+        tool_mgr = self.context.get_llm_tool_manager()
+        persona_plus_tool_names = set(self.LLM_TOOL_NAME_BY_OPTION.values())
+        enabled_tool_names = {
+            self.LLM_TOOL_NAME_BY_OPTION[key]
+            for key in self.llm_tool_options
+            if key in self.LLM_TOOL_NAME_BY_OPTION
+        }
+
+        for tool in tool_mgr.func_list:
+            module_path = getattr(tool, "handler_module_path", None)
+            from_persona_plus = module_path is None or module_path == self.__module__
+            if tool.name in persona_plus_tool_names and from_persona_plus:
+                tool.active = tool.name in enabled_tool_names
+
+        logger.info(
+            "Persona+ 函数工具配置：选项=%s，启用=%s",
+            sorted(self.llm_tool_options),
+            sorted(enabled_tool_names),
+        )
 
     def _load_config(self) -> None:
         self.settings = load_settings(self.config)
@@ -53,6 +84,9 @@ class PersonaPlus(Star):
         self.admin_commands = self.settings.admin_commands
         self.auto_switch_announce = self.settings.auto_switch_announce
         self.clear_context_on_switch = self.settings.clear_context_on_switch
+        self.llm_tool_options = self.settings.llm_tool_options
+
+        self._sync_llm_tools()
 
         self.qq_sync.load_config(self.config)
 
@@ -79,6 +113,19 @@ class PersonaPlus(Star):
             "Persona+ 切换后清空上下文：clear_context_on_switch=%s",
             self.clear_context_on_switch,
         )
+
+    @filter.on_astrbot_loaded()
+    async def on_astrbot_loaded(self):
+        """核心加载完成后重新同步函数工具状态。"""
+
+        self._sync_llm_tools()
+
+    @filter.on_plugin_loaded()
+    async def on_plugin_loaded(self, metadata):
+        """插件加载后同步本插件函数工具状态，避免被旧状态覆盖。"""
+
+        if getattr(metadata, "module_path", None) == self.__module__:
+            self._sync_llm_tools()
 
     def check_permission(
         self, event: AstrMessageEvent, command: str

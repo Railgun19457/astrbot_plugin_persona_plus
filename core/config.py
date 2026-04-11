@@ -7,6 +7,15 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 
 from .models import KeywordMapping, parse_mapping_entry
 
+LLM_TOOL_OPTIONS = (
+    "list",
+    "switch",
+    "view",
+    "create",
+    "update",
+    "delete",
+)
+
 
 @dataclass(slots=True)
 class PersonaPlusSettings:
@@ -17,7 +26,7 @@ class PersonaPlusSettings:
     admin_commands: set[str]
     auto_switch_announce: bool
     clear_context_on_switch: bool
-    enable_llm_tools: bool
+    llm_tool_options: set[str]
 
 
 def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
@@ -33,7 +42,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
             admin_commands={"create", "update", "delete", "avatar"},
             auto_switch_announce=True,
             clear_context_on_switch=False,
-            enable_llm_tools=False,
+            llm_tool_options=set(),
         )
 
     mappings_raw = config.get("keyword_mappings", [])
@@ -104,7 +113,32 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
 
     auto_switch_announce = bool(config.get("enable_auto_switch_announce", True))
     clear_context_on_switch = bool(config.get("clear_context_on_switch", False))
-    enable_llm_tools = bool(config.get("enable_llm_tools", False))
+    llm_tool_options_raw = config.get("llm_tool_options", None)
+    llm_tool_options: set[str] = set()
+    if llm_tool_options_raw is not None:
+        if isinstance(llm_tool_options_raw, list):
+            llm_tool_options = {
+                str(item).lower().strip()
+                for item in llm_tool_options_raw
+                if str(item).strip()
+            }
+        else:
+            logger.warning(
+                "Persona+ llm_tool_options 配置应为列表，实际收到 %r，已忽略",
+                llm_tool_options_raw,
+            )
+
+    # Backward compatibility for old bool switch.
+    if llm_tool_options_raw is None and bool(config.get("enable_llm_tools", False)):
+        llm_tool_options = set(LLM_TOOL_OPTIONS)
+
+    unsupported_llm_tool_options = llm_tool_options - set(LLM_TOOL_OPTIONS)
+    if unsupported_llm_tool_options:
+        logger.warning(
+            "Persona+ llm_tool_options 包含不支持的项：%s，已忽略",
+            sorted(unsupported_llm_tool_options),
+        )
+        llm_tool_options = llm_tool_options.intersection(set(LLM_TOOL_OPTIONS))
 
     raw_timeout = config.get("manage_wait_timeout_seconds", 60)
     try:
@@ -130,5 +164,5 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
         admin_commands=admin_commands,
         auto_switch_announce=auto_switch_announce,
         clear_context_on_switch=clear_context_on_switch,
-        enable_llm_tools=enable_llm_tools,
+        llm_tool_options=llm_tool_options,
     )
