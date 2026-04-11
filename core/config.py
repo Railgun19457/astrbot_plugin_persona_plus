@@ -17,6 +17,7 @@ class PersonaPlusSettings:
     admin_commands: set[str]
     auto_switch_announce: bool
     clear_context_on_switch: bool
+    enable_llm_tools: bool
 
 
 def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
@@ -32,6 +33,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
             admin_commands={"switch", "create", "update", "delete", "view", "avatar"},
             auto_switch_announce=True,
             clear_context_on_switch=False,
+            enable_llm_tools=False,
         )
 
     mappings_raw = config.get("keyword_mappings", "")
@@ -77,6 +79,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
 
     auto_switch_announce = bool(config.get("enable_auto_switch_announce", True))
     clear_context_on_switch = bool(config.get("clear_context_on_switch", False))
+    enable_llm_tools = bool(config.get("enable_llm_tools", False))
 
     raw_timeout = config.get("manage_wait_timeout_seconds", 60)
     try:
@@ -102,4 +105,5 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
         admin_commands=admin_commands,
         auto_switch_announce=auto_switch_announce,
         clear_context_on_switch=clear_context_on_switch,
+        enable_llm_tools=enable_llm_tools,
     )

@@ -64,6 +64,10 @@
   - 默认:"switch", "create", "update", "delete", "view", "avatar"
   - 其中switch为快速切换
 
+- 启用函数工具(enable_llm_tools)
+  - 开启后会向 LLM 暴露人格列表、查看、切换、创建、更新、删除等函数工具
+  - 默认: false
+
 - 切换提示(enable_auto_switch_announce)
   - 切换人格时，是否发送提示
   - 默认：开启

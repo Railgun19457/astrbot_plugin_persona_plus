@@ -34,6 +34,12 @@
     "type": "list",
     "default": ["switch", "create", "update", "delete", "view", "avatar"]
   },
+  "enable_llm_tools": {
+    "description": "启用函数工具",
+    "hint": "开启后会向 LLM 暴露人格列表、查看、切换、创建、更新、删除等函数工具。",
+    "type": "bool",
+    "default": false
+  },
   "enable_auto_switch_announce": {
     "description": "切换提示",
     "hint": "切换人格时，是否发送提示",

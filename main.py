@@ -12,6 +12,11 @@ from astrbot.core.star.star_tools import StarTools
 
 from .core.config import PersonaPlusSettings, load_settings
 from .core.keyword_switch import match_keyword
+from .core.llm_tools import (
+    TOOL_NAMES,
+    clear_persona_plus_plugin,
+    set_persona_plus_plugin,
+)
 from .core.permissions import check_permission
 from .core.session_flows import SenderScopedSessionFilter, schedule_persona_wait
 from .core.switching import switch_persona
@@ -35,10 +40,8 @@ class PersonaPlus(Star):
         self.clear_context_on_switch = False
 
         self.qq_sync = QQProfileSync(context)
-
         self._tasks: set[asyncio.Task] = set()
 
-        # 初始化人格数据目录
         self.persona_data_dir: Path = (
             StarTools.get_data_dir("astrbot_plugin_persona_plus") / "persona_files"
         )
@@ -57,6 +60,14 @@ class PersonaPlus(Star):
         self.clear_context_on_switch = self.settings.clear_context_on_switch
 
         self.qq_sync.load_config(self.config)
+
+        for tool_name in TOOL_NAMES:
+            StarTools.deactivate_llm_tool(tool_name)
+        clear_persona_plus_plugin()
+        if self.settings.enable_llm_tools:
+            set_persona_plus_plugin(self)
+            for tool_name in TOOL_NAMES:
+                StarTools.activate_llm_tool(tool_name)
 
         logger.info(
             "Persona+ 配置加载完成：关键词 %d 项，自动切换范围=%s，关键词自动切换=%s，QQ同步=%s",
@@ -82,21 +93,11 @@ class PersonaPlus(Star):
             self.clear_context_on_switch,
         )
 
-    # ==================== 工具函数 ====================
     def check_permission(
         self, event: AstrMessageEvent, command: str
     ) -> tuple[bool, str]:
-        """统一的权限检查函数。
+        """统一的权限检查函数。"""
 
-        Args:
-            event: 消息事件
-            command: 指令名称 (help, list, view, create, update, delete, avatar)
-
-        Returns:
-            (是否有权限, 错误提示信息)
-            - (True, "") - 有权限
-            - (False, "错误信息") - 无权限
-        """
         return check_permission(
             context=self.context,
             event=event,
@@ -106,7 +107,7 @@ class PersonaPlus(Star):
 
     @staticmethod
     def _parse_persona_payload(raw_text: str) -> tuple[str, list]:
-        """将用户传入的全部文本作为 system_prompt"""
+        """将用户传入的全部文本作为 system_prompt。"""
         return raw_text, []
 
     @staticmethod
@@ -124,6 +125,154 @@ class PersonaPlus(Star):
             raise ValueError("人格 ID 不能为空。")
 
         return parts[:-1], parts[-1]
+
+    async def _update_persona_by_reference(
+        self,
+        persona_reference: str,
+        system_prompt: str,
+    ) -> str:
+        _, resolved_persona_id = await self._resolve_persona_reference(
+            persona_reference,
+            require_existing=True,
+        )
+        await self.persona_mgr.update_persona(
+            persona_id=resolved_persona_id,
+            system_prompt=system_prompt,
+            begin_dialogs=None,
+        )
+        return f"人格 {resolved_persona_id} 已更新。"
+
+    async def _delete_persona_by_reference(self, persona_reference: str) -> str:
+        _, resolved_persona_id = await self._resolve_persona_reference(
+            persona_reference,
+            require_existing=True,
+        )
+        await self.persona_mgr.delete_persona(resolved_persona_id)
+        self.qq_sync.delete_avatar(resolved_persona_id)
+        return f"人格 {resolved_persona_id} 已删除。"
+
+    async def _switch_persona_by_reference(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+    ) -> str:
+        _, resolved_persona_id = await self._resolve_persona_reference(
+            persona_reference,
+            require_existing=True,
+        )
+        await switch_persona(
+            context=self.context,
+            persona_mgr=self.persona_mgr,
+            qq_sync=self.qq_sync,
+            event=event,
+            persona_id=resolved_persona_id,
+            scope=self.auto_switch_scope,
+            clear_context_on_switch=self.clear_context_on_switch,
+            announce=None,
+        )
+        return f"已切换人格为 {resolved_persona_id}"
+
+    def _schedule_persona_wait(
+        self,
+        event: AstrMessageEvent,
+        persona_id: str,
+        mode: str,
+        folder_id: str | None = None,
+    ) -> None:
+        def register_task(task: asyncio.Task) -> None:
+            self._tasks.add(task)
+            task.add_done_callback(lambda t: self._tasks.discard(t))
+
+        async def create_persona(
+            persona_id_: str,
+            system_prompt: str,
+            begin_dialogs: list | None,
+            tools: list | None,
+        ) -> None:
+            await self._create_persona(
+                persona_id=persona_id_,
+                system_prompt=system_prompt,
+                begin_dialogs=begin_dialogs,
+                tools=tools,
+                folder_id=folder_id,
+            )
+
+        async def update_persona(
+            persona_id_: str,
+            system_prompt: str,
+            begin_dialogs: list | None,
+        ) -> None:
+            await self.persona_mgr.update_persona(
+                persona_id=persona_id_,
+                system_prompt=system_prompt,
+                begin_dialogs=begin_dialogs if begin_dialogs else None,
+            )
+
+        schedule_persona_wait(
+            event=event,
+            persona_id=persona_id,
+            mode=mode,
+            manage_wait_timeout=self.manage_wait_timeout,
+            persona_data_dir=self.persona_data_dir,
+            qq_sync=self.qq_sync,
+            create_persona=create_persona,
+            update_persona=update_persona,
+            register_task=register_task,
+            session_filter=SenderScopedSessionFilter(event),
+        )
+        return
+
+    async def _create_persona(
+        self,
+        persona_id: str,
+        system_prompt: str,
+        begin_dialogs: list | None,
+        folder_id: str | None = None,
+        tools: list | None = None,
+    ):
+        """创建新人格"""
+        try:
+            await self.persona_mgr.get_persona(persona_id)
+        except ValueError:
+            await self.persona_mgr.create_persona(
+                persona_id=persona_id,
+                system_prompt=system_prompt,
+                begin_dialogs=begin_dialogs if begin_dialogs else None,
+                folder_id=folder_id,
+                tools=tools,
+            )
+            logger.info("Persona+ 已创建人格 %s", persona_id)
+        else:
+            raise ValueError(
+                f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
+            )
+
+    async def _switch_persona(
+        self,
+        event: AstrMessageEvent,
+        persona_id: str,
+        announce: str | None = None,
+    ) -> MessageEventResult | None:
+        """切换对话或配置中的默认人格。"""
+
+        _, resolved_persona_id = await self._resolve_persona_reference(
+            persona_id,
+            require_existing=True,
+        )
+
+        if announce is None and self.auto_switch_announce:
+            announce = f"已切换人格为 {resolved_persona_id}"
+
+        return await switch_persona(
+            context=self.context,
+            persona_mgr=self.persona_mgr,
+            qq_sync=self.qq_sync,
+            event=event,
+            persona_id=resolved_persona_id,
+            scope=self.auto_switch_scope,
+            clear_context_on_switch=self.clear_context_on_switch,
+            announce=announce,
+        )
 
     async def _find_folder_id_by_path(
         self,
@@ -250,107 +399,125 @@ class PersonaPlus(Star):
             current = folders.get(current.parent_id)
         return "/".join(reversed(parts)) if parts else "根目录"
 
-    def _schedule_persona_wait(
-        self,
-        event: AstrMessageEvent,
-        persona_id: str,
-        mode: str,
-        folder_id: str | None = None,
-    ) -> None:
-        def register_task(task: asyncio.Task) -> None:
-            self._tasks.add(task)
-            task.add_done_callback(lambda t: self._tasks.discard(t))
+    async def _render_persona_list_text(self, folder_path: str | None = None) -> str:
+        personas = await self.persona_mgr.get_all_personas()
+        if not personas:
+            return "当前没有人格，请先在控制台或通过指令创建。"
 
-        async def create_persona(
-            persona_id_: str,
-            system_prompt: str,
-            begin_dialogs: list | None,
-            tools: list | None,
-        ) -> None:
-            await self._create_persona(
-                persona_id=persona_id_,
-                system_prompt=system_prompt,
-                begin_dialogs=begin_dialogs,
-                tools=tools,
-                folder_id=folder_id,
-            )
+        folder_tree = await self.persona_mgr.get_folder_tree()
+        target_tree = folder_tree
+        header = "已载入人格："
 
-        async def update_persona(
-            persona_id_: str,
-            system_prompt: str,
-            begin_dialogs: list | None,
-        ) -> None:
-            await self.persona_mgr.update_persona(
-                persona_id=persona_id_,
-                system_prompt=system_prompt,
-                begin_dialogs=begin_dialogs if begin_dialogs else None,
-            )
+        if folder_path:
+            normalized_folder_path = folder_path.strip().replace("\\", "/").strip("/")
+            folder_parts = [part for part in normalized_folder_path.split("/") if part]
+            folder_id = await self._find_folder_id_by_path(folder_parts)
+            folder_node = self._find_folder_tree_node(folder_tree, folder_id)
+            if folder_node is None:
+                raise ValueError(f"未找到文件夹路径：{folder_path}")
 
-        schedule_persona_wait(
-            event=event,
-            persona_id=persona_id,
-            mode=mode,
-            manage_wait_timeout=self.manage_wait_timeout,
-            persona_data_dir=self.persona_data_dir,
-            qq_sync=self.qq_sync,
-            create_persona=create_persona,
-            update_persona=update_persona,
-            register_task=register_task,
-            session_filter=SenderScopedSessionFilter(event),
-        )
-        return
+            target_tree = [folder_node]
+            header = f"文件夹 {normalized_folder_path or '根目录'} 下的人格："
 
-    async def _create_persona(
-        self,
-        persona_id: str,
-        system_prompt: str,
-        begin_dialogs: list | None,
-        folder_id: str | None = None,
-        tools: list | None = None,
-    ):
-        """创建新人格"""
-        try:
-            await self.persona_mgr.get_persona(persona_id)
-        except ValueError:
-            await self.persona_mgr.create_persona(
-                persona_id=persona_id,
-                system_prompt=system_prompt,
-                begin_dialogs=begin_dialogs if begin_dialogs else None,
-                folder_id=folder_id,
-                tools=tools,
-            )
-            logger.info("Persona+ 已创建人格 %s", persona_id)
-        else:
-            raise ValueError(
-                f"人格 {persona_id} 已存在，请使用 /persona_plus update {persona_id}。"
-            )
+        lines = [header]
+        tree_lines = self._build_folder_tree_output(target_tree, personas)
+        if tree_lines:
+            lines.extend(tree_lines)
+        elif not folder_path:
+            lines.append("- 当前没有已组织的文件夹人格")
 
-    async def _switch_persona(
-        self,
-        event: AstrMessageEvent,
-        persona_id: str,
-        announce: str | None = None,
-    ) -> MessageEventResult | None:
-        """切换对话或配置中的默认人格。"""
+        if not folder_path:
+            root_personas = [p for p in personas if p.folder_id is None]
+            if root_personas:
+                if tree_lines:
+                    lines.append("")
+                for persona in root_personas:
+                    begin_cnt = len(persona.begin_dialogs or [])
+                    tool_cnt = (
+                        len(persona.tools or []) if persona.tools is not None else "ALL"
+                    )
+                    skill_cnt = (
+                        len(persona.skills or [])
+                        if persona.skills is not None
+                        else "ALL"
+                    )
+                    lines.append(
+                        f"👤 {persona.persona_id} | 预设对话: {begin_cnt} | 工具: {tool_cnt} | Skills: {skill_cnt}"
+                    )
 
+        lines.append(f"\n共 {len(personas)} 个人格")
+        return "\n".join(lines)
+
+    async def _render_persona_detail_text(self, persona_reference: str) -> str:
         _, resolved_persona_id = await self._resolve_persona_reference(
-            persona_id,
+            persona_reference,
             require_existing=True,
         )
+        persona = await self.persona_mgr.get_persona(resolved_persona_id)
 
-        if announce is None and self.auto_switch_announce:
-            announce = f"已切换人格为 {resolved_persona_id}"
-
-        return await switch_persona(
-            context=self.context,
-            persona_mgr=self.persona_mgr,
-            qq_sync=self.qq_sync,
-            event=event,
-            persona_id=resolved_persona_id,
-            scope=self.auto_switch_scope,
-            clear_context_on_switch=self.clear_context_on_switch,
-            announce=announce,
+        begin_dialogs = persona.begin_dialogs or []
+        tools = persona.tools
+        skills = persona.skills
+        folder_path = await self._get_folder_path_by_id(
+            getattr(persona, "folder_id", None)
         )
+        sort_order = getattr(persona, "sort_order", 0)
+        custom_error_message = getattr(persona, "custom_error_message", None)
+
+        lines = [
+            f"人格 {persona.persona_id}",
+            "----------------",
+            f"文件夹：{folder_path}",
+            f"排序：{sort_order}",
+            "System Prompt:",
+            persona.system_prompt,
+        ]
+
+        if begin_dialogs:
+            lines.append("\n预设对话：")
+            for idx, dialog in enumerate(begin_dialogs, start=1):
+                role = "用户" if idx % 2 == 1 else "助手"
+                lines.append(f"[{role}] {dialog}")
+
+        if tools is None:
+            lines.append("\n工具：使用全部可用工具")
+        elif len(tools) == 0:
+            lines.append("\n工具：已禁用所有工具")
+        else:
+            lines.append("\n工具：" + ", ".join(tools))
+
+        if skills is None:
+            lines.append("\nSkills：使用全部可用 Skills")
+        elif len(skills) == 0:
+            lines.append("\nSkills：已禁用所有 Skills")
+        else:
+            lines.append("\nSkills：" + ", ".join(skills))
+
+        if custom_error_message:
+            lines.append("\n自定义错误回复：")
+            lines.append(custom_error_message)
+
+        return "\n".join(lines)
+
+    async def _create_persona_by_reference(
+        self,
+        persona_reference: str,
+        system_prompt: str,
+    ) -> str:
+        folder_id, resolved_persona_id = await self._resolve_persona_reference(
+            persona_reference,
+            require_existing=False,
+            create_missing_folders=True,
+        )
+
+        try:
+            await self.persona_mgr.get_persona(resolved_persona_id)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f"人格 {resolved_persona_id} 已存在。")
+
+        return f"人格 {resolved_persona_id} 已创建。"
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_quick_switch_command(self, event: AstrMessageEvent):
@@ -454,62 +621,10 @@ class PersonaPlus(Star):
             yield event.plain_result(err_msg)
             return
 
-        personas = await self.persona_mgr.get_all_personas()
-        if not personas:
-            yield event.plain_result("当前没有人格，请先在控制台或通过指令创建。")
-            return
-
-        folder_tree = await self.persona_mgr.get_folder_tree()
-        target_tree = folder_tree
-        header = "已载入人格："
-
-        if folder_path:
-            normalized_folder_path = folder_path.strip().replace("\\", "/").strip("/")
-            try:
-                folder_parts = [
-                    part for part in normalized_folder_path.split("/") if part
-                ]
-                folder_id = await self._find_folder_id_by_path(folder_parts)
-            except ValueError as exc:
-                yield event.plain_result(str(exc))
-                return
-
-            folder_node = self._find_folder_tree_node(folder_tree, folder_id)
-            if folder_node is None:
-                yield event.plain_result(f"未找到文件夹路径：{folder_path}")
-                return
-
-            target_tree = [folder_node]
-            header = f"文件夹 {normalized_folder_path or '根目录'} 下的人格："
-
-        lines = [header]
-        tree_lines = self._build_folder_tree_output(target_tree, personas)
-        if tree_lines:
-            lines.extend(tree_lines)
-        elif not folder_path:
-            lines.append("- 当前没有已组织的文件夹人格")
-
-        if not folder_path:
-            root_personas = [p for p in personas if p.folder_id is None]
-            if root_personas:
-                if tree_lines:
-                    lines.append("")
-                for persona in root_personas:
-                    begin_cnt = len(persona.begin_dialogs or [])
-                    tool_cnt = (
-                        len(persona.tools or []) if persona.tools is not None else "ALL"
-                    )
-                    skill_cnt = (
-                        len(persona.skills or [])
-                        if persona.skills is not None
-                        else "ALL"
-                    )
-                    lines.append(
-                        f"👤 {persona.persona_id} | 预设对话: {begin_cnt} | 工具: {tool_cnt} | Skills: {skill_cnt}"
-                    )
-
-        lines.append(f"\n共 {len(personas)} 个人格")
-        yield event.plain_result("\n".join(lines))
+        try:
+            yield event.plain_result(await self._render_persona_list_text(folder_path))
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
 
     @persona_plus.command("view")
     async def cmd_view(self, event: AstrMessageEvent, persona_id: str):
@@ -521,58 +636,9 @@ class PersonaPlus(Star):
             return
 
         try:
-            _, resolved_persona_id = await self._resolve_persona_reference(
-                persona_id,
-                require_existing=True,
-            )
-            persona = await self.persona_mgr.get_persona(resolved_persona_id)
+            yield event.plain_result(await self._render_persona_detail_text(persona_id))
         except ValueError as exc:
             yield event.plain_result(str(exc))
-            return
-
-        begin_dialogs = persona.begin_dialogs or []
-        tools = persona.tools
-        skills = persona.skills
-        folder_path = await self._get_folder_path_by_id(
-            getattr(persona, "folder_id", None)
-        )
-        sort_order = getattr(persona, "sort_order", 0)
-        custom_error_message = getattr(persona, "custom_error_message", None)
-
-        lines = [
-            f"人格 {persona.persona_id}",
-            "----------------",
-            f"文件夹：{folder_path}",
-            f"排序：{sort_order}",
-            "System Prompt:",
-            persona.system_prompt,
-        ]
-
-        if begin_dialogs:
-            lines.append("\n预设对话：")
-            for idx, dialog in enumerate(begin_dialogs, start=1):
-                role = "用户" if idx % 2 == 1 else "助手"
-                lines.append(f"[{role}] {dialog}")
-
-        if tools is None:
-            lines.append("\n工具：使用全部可用工具")
-        elif len(tools) == 0:
-            lines.append("\n工具：已禁用所有工具")
-        else:
-            lines.append("\n工具：" + ", ".join(tools))
-
-        if skills is None:
-            lines.append("\nSkills：使用全部可用 Skills")
-        elif len(skills) == 0:
-            lines.append("\nSkills：已禁用所有 Skills")
-        else:
-            lines.append("\nSkills：" + ", ".join(skills))
-
-        if custom_error_message:
-            lines.append("\n自定义错误回复：")
-            lines.append(custom_error_message)
-
-        yield event.plain_result("\n".join(lines))
 
     @persona_plus.command("delete")
     async def cmd_delete(self, event: AstrMessageEvent, persona_id: str):
@@ -709,6 +775,10 @@ class PersonaPlus(Star):
 
     async def terminate(self):
         """插件卸载时的清理逻辑。"""
+
+        for tool_name in TOOL_NAMES:
+            StarTools.deactivate_llm_tool(tool_name)
+        clear_persona_plus_plugin()
 
         for task in list(self._tasks):
             task.cancel()
