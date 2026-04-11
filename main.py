@@ -125,30 +125,35 @@ class PersonaPlus(Star):
 
         return parts[:-1], parts[-1]
 
-    async def _find_folder_id_by_path(self, folder_parts: list[str]) -> str | None:
+    async def _find_folder_id_by_path(
+        self,
+        folder_parts: list[str],
+        *,
+        create_missing: bool = False,
+    ) -> str | None:
         if not folder_parts:
             return None
 
-        folder_tree = await self.persona_mgr.get_folder_tree()
+        folder_id: str | None = None
+        for folder_name in folder_parts:
+            children = await self.persona_mgr.get_folders(folder_id)
+            matched = next(
+                (item for item in children if item.name == folder_name), None
+            )
+            if matched is None:
+                if not create_missing:
+                    raise ValueError(f"未找到文件夹路径：{'/'.join(folder_parts)}")
+                matched = await self.persona_mgr.create_folder(
+                    name=folder_name,
+                    parent_id=folder_id,
+                )
+                logger.info(
+                    "Persona+ 已自动创建文件夹 %s (parent=%s)",
+                    folder_name,
+                    folder_id or "root",
+                )
+            folder_id = matched.folder_id
 
-        def walk(nodes: list[dict], remaining: list[str]) -> str | None:
-            if not remaining:
-                return None
-
-            target = remaining[0]
-            for node in nodes:
-                if node.get("name") != target:
-                    continue
-                if len(remaining) == 1:
-                    return node.get("folder_id")
-                found = walk(node.get("children", []), remaining[1:])
-                if found is not None:
-                    return found
-            return None
-
-        folder_id = walk(folder_tree, folder_parts)
-        if folder_id is None:
-            raise ValueError(f"未找到文件夹路径：{'/'.join(folder_parts)}")
         return folder_id
 
     async def _resolve_persona_reference(
@@ -156,9 +161,13 @@ class PersonaPlus(Star):
         persona_reference: str,
         *,
         require_existing: bool,
+        create_missing_folders: bool = False,
     ) -> tuple[str | None, str]:
         folder_parts, persona_id = self._split_persona_reference(persona_reference)
-        folder_id = await self._find_folder_id_by_path(folder_parts)
+        folder_id = await self._find_folder_id_by_path(
+            folder_parts,
+            create_missing=create_missing_folders,
+        )
 
         if not require_existing:
             return folder_id, persona_id
@@ -472,6 +481,7 @@ class PersonaPlus(Star):
             _folder_id, resolved_persona_id = await self._resolve_persona_reference(
                 persona_id,
                 require_existing=False,
+                create_missing_folders=True,
             )
         except ValueError as exc:
             yield event.plain_result(str(exc))
