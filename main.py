@@ -35,7 +35,7 @@ class PersonaPlus(Star):
         self.auto_switch_scope = "conversation"
         self.keyword_switch_enabled = True
         self.manage_wait_timeout = 60
-        self.admin_commands: set[str] = set()
+        self.admin_commands: dict[str, bool] = {}
         self.auto_switch_announce = True
         self.clear_context_on_switch = False
 
@@ -78,7 +78,9 @@ class PersonaPlus(Star):
         )
         logger.info(
             "Persona+ 权限配置：admin_commands=%s",
-            sorted(self.admin_commands),
+            sorted(
+                command for command, required in self.admin_commands.items() if required
+            ),
         )
         logger.info(
             "Persona+ 管理操作等待超时：manage_wait_timeout=%ss",

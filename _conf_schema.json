@@ -7,9 +7,9 @@
   },
   "keyword_mappings": {
     "description": "关键词与人格切换映射列表",
-    "hint": "每行填写 关键词:人格ID，使用英文冒号分隔！！！",
-    "type": "text",
-    "default":"关键词:人格"
+    "hint": "每项填写一个映射字符串，格式为 关键词:人格ID；也支持在配置里直接填写对象形式。",
+    "type": "list",
+    "default": ["关键词:人格"]
   },
   "auto_switch_scope": {
     "description": "切换作用范围",
@@ -29,10 +29,59 @@
     "default": 60
   },
   "admin_commands": {
-    "description": "需要管理员权限的指令列表",
-    "hint": "在此列表中的指令需要管理员权限执行。可选值: switch, create, update, delete, view, list, help, avatar",
-    "type": "list",
-    "default": ["switch", "create", "update", "delete", "view", "avatar"]
+    "description": "需要管理员权限的指令配置",
+    "hint": "以对象形式配置指令是否需要管理员权限；值为 true 表示需要管理员权限，false 表示普通用户可用。",
+    "type": "object",
+    "items": {
+      "switch": {
+        "type": "bool",
+        "description": "快捷切换人格",
+        "hint": "是否要求管理员权限",
+        "default": false
+      },
+      "create": {
+        "type": "bool",
+        "description": "创建人格",
+        "hint": "是否要求管理员权限",
+        "default": true
+      },
+      "update": {
+        "type": "bool",
+        "description": "更新人格",
+        "hint": "是否要求管理员权限",
+        "default": true
+      },
+      "delete": {
+        "type": "bool",
+        "description": "删除人格",
+        "hint": "是否要求管理员权限",
+        "default": true
+      },
+      "view": {
+        "type": "bool",
+        "description": "查看人格详情",
+        "hint": "是否要求管理员权限",
+        "default": false
+      },
+      "avatar": {
+        "type": "bool",
+        "description": "上传人格头像",
+        "hint": "是否要求管理员权限",
+        "default": true
+      },
+      "list": {
+        "type": "bool",
+        "description": "列出人格",
+        "hint": "是否要求管理员权限",
+        "default": false
+      },
+      "help": {
+        "type": "bool",
+        "description": "查看帮助",
+        "hint": "是否要求管理员权限",
+        "default": false
+      }
+    }
   },
   "enable_llm_tools": {
     "description": "启用函数工具",

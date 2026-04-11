@@ -16,8 +16,8 @@ def check_permission(
     context: Context,
     event: AstrMessageEvent,
     command: str,
-    admin_commands: set[str],
+    admin_commands: dict[str, bool],
 ) -> tuple[bool, str]:
-    if command in admin_commands and not is_admin(context, event):
+    if admin_commands.get(command, False) and not is_admin(context, event):
         return False, "此操作需要管理员权限。"
     return True, ""

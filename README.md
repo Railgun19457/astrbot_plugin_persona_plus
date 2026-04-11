@@ -47,7 +47,7 @@
   - 默认: true
 
 - 关键词与人格切换映射列表(keyword_mappings)
-  - 每行一个`关键词:人格ID`，使用英文冒号分隔
+  - 使用列表配置，每项填写一个`关键词:人格ID`，使用英文冒号分隔
   - 人格 ID 也可以填写文件夹路径，例如 `关键词:测试人格/测试`
   
 - 切换作用范围(auto_switch_scope)
@@ -60,9 +60,9 @@
   
 
 - 需要管理员权限的指令列表(admin_commands)
-  - 在此列表中的指令需要管理员权限执行。可选值: switch, create, update, delete, view, list, help, avatar
-  - 默认:"switch", "create", "update", "delete", "view", "avatar"
-  - 其中switch为快速切换
+  - 使用字典配置，每个指令对应一个布尔值，`true` 表示需要管理员权限，`false` 表示普通用户可用
+  - 默认启用管理员权限的指令：create、update、delete、avatar
+  - 默认普通用户可用的指令：switch、view、list、help
 
 - 启用函数工具(enable_llm_tools)
   - 开启后会向 LLM 暴露人格列表、查看、切换、创建、更新、删除等函数工具
