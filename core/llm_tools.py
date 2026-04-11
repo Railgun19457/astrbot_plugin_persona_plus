@@ -35,7 +35,7 @@ def _require_plugin() -> Any:
 
 @llm_tool(name="persona_plus_list")
 async def persona_plus_list(event: AstrMessageEvent, folder_path: str = ""):
-    """查看人设列表。
+    """查看人设列表
 
     Args:
         folder_path(string): 可选的文件夹路径；留空表示列出全部人设。
@@ -51,7 +51,7 @@ async def persona_plus_list(event: AstrMessageEvent, folder_path: str = ""):
 
 @llm_tool(name="persona_plus_switch")
 async def persona_plus_switch(event: AstrMessageEvent, persona_reference: str):
-    """切换人设。
+    """切换人设
 
     Args:
         persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
@@ -67,7 +67,7 @@ async def persona_plus_switch(event: AstrMessageEvent, persona_reference: str):
 
 @llm_tool(name="persona_plus_view")
 async def persona_plus_view(event: AstrMessageEvent, persona_reference: str):
-    """查看人设内容。
+    """查看具体人设内容
 
     Args:
         persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
@@ -87,7 +87,7 @@ async def persona_plus_create(
     persona_reference: str,
     system_prompt: str,
 ):
-    """创建人设。
+    """创建人设
 
     Args:
         persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
@@ -110,7 +110,7 @@ async def persona_plus_update(
     persona_reference: str,
     system_prompt: str,
 ):
-    """更新人设。
+    """更新人设
 
     Args:
         persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
@@ -129,7 +129,7 @@ async def persona_plus_update(
 
 @llm_tool(name="persona_plus_delete")
 async def persona_plus_delete(event: AstrMessageEvent, persona_reference: str):
-    """删除人设。
+    """删除人设
 
     Args:
         persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。

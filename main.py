@@ -139,6 +139,20 @@ class PersonaPlus(Star):
             admin_commands=self.admin_commands,
         )
 
+    def _get_command_prefix(self, event: AstrMessageEvent) -> str:
+        """读取当前会话可见的唤醒前缀，用于帮助文案展示。"""
+
+        conf = self.context.get_config(event.unified_msg_origin)
+        wake_prefix = conf.get("wake_prefix", ["/"])
+        if isinstance(wake_prefix, list):
+            for prefix in wake_prefix:
+                prefix_text = str(prefix).strip()
+                if prefix_text:
+                    return prefix_text
+            return "/"
+        prefix_text = str(wake_prefix).strip()
+        return prefix_text or "/"
+
     @staticmethod
     def _parse_persona_payload(raw_text: str) -> tuple[str, list]:
         """将用户传入的全部文本作为 system_prompt。"""
@@ -544,12 +558,24 @@ class PersonaPlus(Star):
             create_missing_folders=True,
         )
 
+        system_prompt_text = system_prompt.strip()
+        if not system_prompt_text:
+            raise ValueError("system_prompt 不能为空。")
+
         try:
             await self.persona_mgr.get_persona(resolved_persona_id)
         except ValueError:
             pass
         else:
             raise ValueError(f"人格 {resolved_persona_id} 已存在。")
+
+        await self._create_persona(
+            persona_id=resolved_persona_id,
+            system_prompt=system_prompt_text,
+            begin_dialogs=None,
+            folder_id=folder_id,
+            tools=None,
+        )
 
         return f"人格 {resolved_persona_id} 已创建。"
 
@@ -629,19 +655,24 @@ class PersonaPlus(Star):
             yield event.plain_result(err_msg)
             return
 
+        prefix = self._get_command_prefix(event)
+        cmd_base = f"{prefix}persona_plus"
+        cmd_alias_pp = f"{prefix}pp"
+        cmd_alias_plus = f"{prefix}persona+"
+
         sections = [
-            "Persona+ 扩展指令(/persona_plus /pp /persona+ 可用)：",
-            "- /persona_plus 人格ID 或 文件夹/人格ID — 切换到指定人格",
-            "- /persona_plus help — 查看帮助与配置说明",
-            "- /persona_plus list [文件夹路径] — 列出所有人格或指定文件夹下的人格",
-            "- /persona_plus view <人格ID 或 文件夹/人格ID> — 查看人格详情",
-            "- /persona_plus create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
-            "- /persona_plus update <人格ID 或 文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
-            "- /persona_plus avatar <人格ID 或 文件夹/人格ID> — 上传人格头像，随后发送图片",
-            "- /persona_plus delete <人格ID 或 文件夹/人格ID> — 删除人格 (管理员)",
+            f"Persona+ 扩展指令({cmd_base} / {cmd_alias_pp} / {cmd_alias_plus} 可用)：",
+            f"- {cmd_base} 人格ID 或 文件夹/人格ID — 切换到指定人格",
+            f"- {cmd_base} help — 查看帮助与配置说明",
+            f"- {cmd_base} list [文件夹路径] — 列出所有人格或指定文件夹下的人格",
+            f"- {cmd_base} view <人格ID 或 文件夹/人格ID> — 查看人格详情",
+            f"- {cmd_base} create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
+            f"- {cmd_base} update <人格ID 或 文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
+            f"- {cmd_base} avatar <人格ID 或 文件夹/人格ID> — 上传人格头像，随后发送图片",
+            f"- {cmd_base} delete <人格ID 或 文件夹/人格ID> — 删除人格 (管理员)",
             "",
             "提示：创建/更新/头像上传时，只会接收最初发起指令的用户后续发送内容。",
-            "提示：文件夹路径使用 / 分隔，例如：/persona_plus create 测试人格/测试。",
+            f"提示：文件夹路径使用 / 分隔，例如：{cmd_base} create 测试人格/测试。",
             "提示：创建/更新人格时，可以直接发送文本，或上传 .txt/.md 等文本文件。",
         ]
         yield event.plain_result("\n".join(sections))
@@ -812,10 +843,10 @@ class PersonaPlus(Star):
     async def llm_persona_plus_list(
         self, event: AstrMessageEvent, folder_path: str = ""
     ):
-        """查看人设列表。
+        """按文件夹范围查询可用人设列表。
 
         Args:
-            folder_path(string): 可选的文件夹路径；留空表示列出全部人设。
+            folder_path(string): 可选。文件夹路径（如 roleplay/助手组）；留空表示列出全部人设。
         """
 
         try:
@@ -828,10 +859,10 @@ class PersonaPlus(Star):
     async def llm_persona_plus_switch(
         self, event: AstrMessageEvent, persona_reference: str
     ):
-        """切换人设。
+        """切换当前会话的人设。
 
         Args:
-            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+            persona_reference(string): 目标人设 ID，或 文件夹/人设ID 路径。
         """
 
         try:
@@ -844,7 +875,7 @@ class PersonaPlus(Star):
     async def llm_persona_plus_view(
         self, event: AstrMessageEvent, persona_reference: str
     ):
-        """查看人设内容。
+        """查看单个人设的完整详情。
 
         Args:
             persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
@@ -863,11 +894,11 @@ class PersonaPlus(Star):
         persona_reference: str,
         system_prompt: str,
     ):
-        """创建人设。
+        """创建新人设并写入 system prompt。
 
         Args:
-            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
-            system_prompt(string): 人设的 System Prompt。
+            persona_reference(string): 新人设 ID，或 文件夹/人设ID 路径；若文件夹不存在会自动创建。
+            system_prompt(string): 人设完整 System Prompt 文本。
         """
 
         try:
@@ -885,11 +916,11 @@ class PersonaPlus(Star):
         persona_reference: str,
         system_prompt: str,
     ):
-        """更新人设。
+        """更新已存在人设的 system prompt。
 
         Args:
-            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
-            system_prompt(string): 新的人设 System Prompt。
+            persona_reference(string): 目标人设 ID，或 文件夹/人设ID 路径。
+            system_prompt(string): 新的人设 System Prompt 全量文本。
         """
 
         try:
@@ -904,10 +935,10 @@ class PersonaPlus(Star):
     async def llm_persona_plus_delete(
         self, event: AstrMessageEvent, persona_reference: str
     ):
-        """删除人设。
+        """删除指定人设（不可恢复）。
 
         Args:
-            persona_reference(string): 人设 ID，或 文件夹/人设ID 路径。
+            persona_reference(string): 要删除的人设 ID，或 文件夹/人设ID 路径。
         """
 
         try:

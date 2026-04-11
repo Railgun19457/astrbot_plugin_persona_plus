@@ -37,7 +37,7 @@
   },
   "llm_tool_options": {
     "description": "函数工具选项",
-    "hint": "细分控制向 LLM 暴露的人格管理函数工具。未勾选的工具不会暴露。",
+    "hint": "细分控制向 LLM 暴露的人格管理函数工具：list(列表)、switch(切换)、view(详情)、create(创建)、update(更新)、delete(删除)。未勾选项不会暴露。",
     "type": "list",
     "options": ["list", "switch", "view", "create", "update", "delete"],
     "default": []
