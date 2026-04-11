@@ -30,12 +30,9 @@
   },
   "admin_commands": {
     "description": "需要管理员权限的指令列表",
-    "hint": "在此列表中的指令需要管理员权限执行。可选值: switch, create, update, delete, view, list, help, avatar",
+    "hint": "勾选表示该指令需要管理员权限执行。",
     "type": "list",
-    "items": {
-      "type": "string",
-      "options": ["switch", "create", "update", "delete", "view", "list", "help", "avatar"]
-    },
+    "options": ["switch", "create", "update", "delete", "view", "list", "help", "avatar"],
     "default": ["create", "update", "delete", "avatar"]
   },
   "enable_llm_tools": {
