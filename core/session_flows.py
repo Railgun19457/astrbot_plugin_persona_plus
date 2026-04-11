@@ -7,10 +7,22 @@ from pathlib import Path
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.core.utils.session_waiter import SessionController, session_waiter
+from astrbot.core.utils.session_waiter import (
+    SessionController,
+    SessionFilter,
+    session_waiter,
+)
 
 from .message_utils import has_component_of_types
 from .persona_io import extract_persona_from_event
+
+
+class SenderScopedSessionFilter(SessionFilter):
+    def __init__(self, _event: AstrMessageEvent) -> None:
+        pass
+
+    def filter(self, event: AstrMessageEvent) -> str:
+        return f"{event.unified_msg_origin}:{event.get_sender_id()}"
 
 
 def schedule_persona_wait(
@@ -24,6 +36,7 @@ def schedule_persona_wait(
     create_persona: Callable[[str, str, list | None, list | None], asyncio.Future],
     update_persona: Callable[[str, str, list | None], asyncio.Future],
     register_task: Callable[[asyncio.Task], None],
+    session_filter: SessionFilter | None = None,
 ) -> None:
     if mode == "avatar":
         accepted = (Comp.Image, Comp.File)
@@ -81,7 +94,10 @@ def schedule_persona_wait(
 
     async def run_wait() -> None:
         try:
-            await waiter(event)
+            await waiter(
+                event,
+                session_filter=session_filter or SenderScopedSessionFilter(event),
+            )
         except TimeoutError:
             msg = (
                 "等待头像图片超时，操作已取消。"

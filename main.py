@@ -13,7 +13,7 @@ from astrbot.core.star.star_tools import StarTools
 from .core.config import PersonaPlusSettings, load_settings
 from .core.keyword_switch import match_keyword
 from .core.permissions import check_permission
-from .core.session_flows import schedule_persona_wait
+from .core.session_flows import SenderScopedSessionFilter, schedule_persona_wait
 from .core.switching import switch_persona
 from .integrations.qq_profile_sync import QQProfileSync
 
@@ -150,6 +150,7 @@ class PersonaPlus(Star):
             create_persona=create_persona,
             update_persona=update_persona,
             register_task=register_task,
+            session_filter=SenderScopedSessionFilter(event),
         )
         return
 
@@ -286,6 +287,7 @@ class PersonaPlus(Star):
             "- /persona_plus avatar <persona_id> — 上传人格头像，随后发送图片",
             "- /persona_plus delete <persona_id> — 删除人格 (管理员)",
             "",
+            "提示：创建/更新/头像上传时，只会接收最初发起指令的用户后续发送内容。",
             "提示：创建/更新人格时，可以直接发送文本，或上传 .txt/.md 等文本文件。",
         ]
         yield event.plain_result("\n".join(sections))
