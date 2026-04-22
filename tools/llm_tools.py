@@ -16,10 +16,11 @@ class _BasePersonaTool(FunctionTool[AstrAgentContext]):
     plugin: Any = None
 
     def _get_event(self, context: ContextWrapper[AstrAgentContext]):
-        if hasattr(context, "context") and isinstance(
-            context.context, AstrAgentContext
-        ):
-            return context.context.event
+        context_obj = getattr(context, "context", None)
+        if context_obj is not None:
+            event = getattr(context_obj, "event", None)
+            if event is not None:
+                return event
         return None
 
     @staticmethod
@@ -51,7 +52,7 @@ class PersonaPlusListTool(_BasePersonaTool):
         **kwargs: Any,
     ) -> ToolExecResult:
         plugin = self.plugin
-        if not plugin:
+        if plugin is None:
             return "查看人设列表失败，请稍后重试。"
 
         folder_path = self._as_text(kwargs.get("folder_path", ""))
@@ -86,7 +87,7 @@ class PersonaPlusSwitchTool(_BasePersonaTool):
     ) -> ToolExecResult:
         plugin = self.plugin
         event = self._get_event(context)
-        if not plugin or not event:
+        if plugin is None or event is None:
             return "切换人设失败，请稍后重试。"
 
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
@@ -120,7 +121,7 @@ class PersonaPlusViewTool(_BasePersonaTool):
         **kwargs: Any,
     ) -> ToolExecResult:
         plugin = self.plugin
-        if not plugin:
+        if plugin is None:
             return "查看人设内容失败，请稍后重试。"
 
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
@@ -158,7 +159,7 @@ class PersonaPlusCreateTool(_BasePersonaTool):
         **kwargs: Any,
     ) -> ToolExecResult:
         plugin = self.plugin
-        if not plugin:
+        if plugin is None:
             return "创建人设失败，请稍后重试。"
 
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
@@ -199,7 +200,7 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
         **kwargs: Any,
     ) -> ToolExecResult:
         plugin = self.plugin
-        if not plugin:
+        if plugin is None:
             return "更新人设失败，请稍后重试。"
 
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
@@ -236,7 +237,7 @@ class PersonaPlusDeleteTool(_BasePersonaTool):
         **kwargs: Any,
     ) -> ToolExecResult:
         plugin = self.plugin
-        if not plugin:
+        if plugin is None:
             return "删除人设失败，请稍后重试。"
 
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
@@ -248,11 +249,14 @@ class PersonaPlusDeleteTool(_BasePersonaTool):
 
 
 def build_llm_tools(plugin) -> list[FunctionTool[AstrAgentContext]]:
-    return [
-        PersonaPlusListTool(plugin=plugin),
-        PersonaPlusSwitchTool(plugin=plugin),
-        PersonaPlusViewTool(plugin=plugin),
-        PersonaPlusCreateTool(plugin=plugin),
-        PersonaPlusUpdateTool(plugin=plugin),
-        PersonaPlusDeleteTool(plugin=plugin),
+    tools = [
+        PersonaPlusListTool(),
+        PersonaPlusSwitchTool(),
+        PersonaPlusViewTool(),
+        PersonaPlusCreateTool(),
+        PersonaPlusUpdateTool(),
+        PersonaPlusDeleteTool(),
     ]
+    for tool in tools:
+        tool.plugin = plugin
+    return tools
