@@ -110,6 +110,11 @@
 #### ToDo
   - [x] 从文件解析人设
   - [x] 提供tool，让ai可以直接创建/修改人格
+
+#### v1.3.4
+  - 修复 SenderScopedSessionFilter() takes no arguments 问题
+  - 修复 llm tool 调用失败问题
+
 #### v1.3.3
   - **此版本相比`1.3.2`无功能更新，主要是优化代码实现**
   - 优化日志系统
