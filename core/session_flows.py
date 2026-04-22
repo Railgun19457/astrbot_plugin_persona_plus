@@ -97,7 +97,7 @@ def schedule_persona_wait(
         try:
             await waiter(
                 event,
-                session_filter=session_filter or SenderScopedSessionFilter(event),
+                session_filter=session_filter or SenderScopedSessionFilter(),
             )
         except TimeoutError:
             msg = (

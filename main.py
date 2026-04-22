@@ -301,7 +301,7 @@ class PersonaPlus(Star):
             create_persona=create_persona,
             update_persona=update_persona,
             register_task=register_task,
-            session_filter=SenderScopedSessionFilter(event),
+            session_filter=SenderScopedSessionFilter(),
         )
         return
 
