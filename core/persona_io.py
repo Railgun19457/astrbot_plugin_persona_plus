@@ -71,6 +71,7 @@ async def download_and_parse_persona_file(
             f"文件已保存至 {save_path}，请检查文件编码。错误详情: {error_detail}"
         )
 
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
     return content.strip()
 
 

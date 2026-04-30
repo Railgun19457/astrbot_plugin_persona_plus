@@ -111,6 +111,9 @@
   - [x] 从文件解析人设
   - [x] 提供tool，让ai可以直接创建/修改人格
 
+#### v1.3.5
+  - 修复读取文件设定人设时丢失换行的问题
+
 #### v1.3.4
   - 修复 SenderScopedSessionFilter() takes no arguments 问题
   - 修复 llm tool 调用失败问题
