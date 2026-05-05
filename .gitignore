@@ -1,3 +1,4 @@
 __pycache__/
 core/__pycache__/
 integrations/__pycache__/
+.vscode/
