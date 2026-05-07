@@ -55,29 +55,46 @@ class PersonaPlus(Star):
             StarTools.get_data_dir("astrbot_plugin_persona_plus") / "persona_files"
         )
         self.persona_data_dir.mkdir(parents=True, exist_ok=True)
-        self.context.add_llm_tools(*build_llm_tools(self))
         self._load_config()
+        self._register_llm_tools()
 
-    def _sync_llm_tools(self) -> None:
-        # 只同步本插件暴露给 LLM 的函数工具，避免影响其他插件。
+    def _unregister_llm_tools(self) -> None:
+        """移除本插件注册的函数工具，避免关闭配置后仍出现在工具列表。"""
+
         tool_mgr = self.context.get_llm_tool_manager()
         persona_plus_tool_names = set(self.LLM_TOOL_NAME_BY_OPTION.values())
+        tool_mgr.func_list = [
+            tool
+            for tool in tool_mgr.func_list
+            if not (
+                tool.name in persona_plus_tool_names
+                and getattr(tool, "handler_module_path", None) == self.__module__
+            )
+        ]
+
+    def _register_llm_tools(self) -> None:
+        """按配置注册 Persona+ 函数工具。"""
+
+        self._unregister_llm_tools()
+        if not self.llm_tool_options:
+            logger.info("Persona+ 函数工具未启用，跳过注册。")
+            return
+
         enabled_tool_names = {
             self.LLM_TOOL_NAME_BY_OPTION[key]
             for key in self.llm_tool_options
             if key in self.LLM_TOOL_NAME_BY_OPTION
         }
-
-        for tool in tool_mgr.func_list:
-            module_path = getattr(tool, "handler_module_path", None)
-            from_persona_plus = module_path is None or module_path == self.__module__
-            if tool.name in persona_plus_tool_names and from_persona_plus:
-                tool.active = tool.name in enabled_tool_names
+        tools = [
+            tool for tool in build_llm_tools(self) if tool.name in enabled_tool_names
+        ]
+        if tools:
+            self.context.add_llm_tools(*tools)
 
         logger.info(
-            "Persona+ 函数工具配置：选项=%s，启用=%s",
+            "Persona+ 函数工具配置：选项=%s，已注册=%s",
             sorted(self.llm_tool_options),
-            sorted(enabled_tool_names),
+            sorted(tool.name for tool in tools),
         )
 
     def _load_config(self) -> None:
@@ -91,8 +108,6 @@ class PersonaPlus(Star):
         self.auto_switch_announce = self.settings.auto_switch_announce
         self.clear_context_on_switch = self.settings.clear_context_on_switch
         self.llm_tool_options = self.settings.llm_tool_options
-
-        self._sync_llm_tools()
 
         self.qq_sync.load_config(self.config)
 
@@ -122,16 +137,16 @@ class PersonaPlus(Star):
 
     @filter.on_astrbot_loaded()
     async def on_astrbot_loaded(self):
-        """核心加载完成后重新同步函数工具状态。"""
+        """核心加载完成后重新注册函数工具。"""
 
-        self._sync_llm_tools()
+        self._register_llm_tools()
 
     @filter.on_plugin_loaded()
     async def on_plugin_loaded(self, metadata):
-        """插件加载后同步本插件函数工具状态，避免被旧状态覆盖。"""
+        """插件加载后重新注册本插件函数工具，避免被旧状态覆盖。"""
 
         if getattr(metadata, "module_path", None) == self.__module__:
-            self._sync_llm_tools()
+            self._register_llm_tools()
 
     def check_permission(
         self, event: AstrMessageEvent, command: str
