@@ -29,6 +29,21 @@ class _BasePersonaTool(FunctionTool[AstrAgentContext]):
             return ""
         return str(value).strip()
 
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _optional_list(value: Any, field_name: str) -> list | None:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} 必须是数组或 null。")
+        return value
+
 
 @pydantic_dataclass
 class PersonaPlusListTool(_BasePersonaTool):
@@ -137,7 +152,9 @@ class PersonaPlusViewTool(_BasePersonaTool):
 @pydantic_dataclass
 class PersonaPlusCreateTool(_BasePersonaTool):
     name: str = "persona_plus_create"
-    description: str = "创建新人设并写入 system prompt"
+    description: str = (
+        "创建新人设，并可完整配置预设对话、工具、MCP 工具、Skills 与错误回复"
+    )
     parameters: dict = Field(
         default_factory=lambda: {
             "type": "object",
@@ -149,6 +166,25 @@ class PersonaPlusCreateTool(_BasePersonaTool):
                 "system_prompt": {
                     "type": "string",
                     "description": "人设完整 System Prompt 文本",
+                },
+                "begin_dialogs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "可选。预设对话文本数组，必须按用户、助手交替排列且数量为偶数",
+                },
+                "tools": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "description": "可选。允许此人设使用的函数工具名列表；null 或省略表示使用全部工具，空数组表示禁用全部工具。MCP 工具也填写工具名",
+                },
+                "skills": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "description": "可选。允许此人设使用的 Skills 名称列表；null 或省略表示使用全部 Skills，空数组表示禁用全部 Skills",
+                },
+                "custom_error_message": {
+                    "type": "string",
+                    "description": "可选。此人设请求失败时发送给用户的自定义错误回复",
                 },
             },
             "required": ["persona_reference", "system_prompt"],
@@ -166,11 +202,35 @@ class PersonaPlusCreateTool(_BasePersonaTool):
 
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         system_prompt = self._as_text(kwargs.get("system_prompt", ""))
+
+        async def create_persona():
+            begin_dialogs = self._optional_list(
+                kwargs.get("begin_dialogs"),
+                "begin_dialogs",
+            )
+            tools = self._optional_list(
+                kwargs.get("tools"),
+                "tools",
+            )
+            skills = self._optional_list(
+                kwargs.get("skills"),
+                "skills",
+            )
+            custom_error_message = self._optional_text(
+                kwargs.get("custom_error_message")
+            )
+            return await plugin._create_persona_by_reference(
+                persona_reference,
+                system_prompt,
+                begin_dialogs=begin_dialogs,
+                tools=tools,
+                skills=skills,
+                custom_error_message=custom_error_message,
+            )
+
         return await plugin._run_llm_tool(
             "create",
-            lambda: plugin._create_persona_by_reference(
-                persona_reference, system_prompt
-            ),
+            create_persona,
             "创建人设失败，请稍后重试。",
         )
 
@@ -178,7 +238,7 @@ class PersonaPlusCreateTool(_BasePersonaTool):
 @pydantic_dataclass
 class PersonaPlusUpdateTool(_BasePersonaTool):
     name: str = "persona_plus_update"
-    description: str = "更新已存在人设的 system prompt"
+    description: str = "更新已存在人设，可修改 system prompt、预设对话、工具、MCP 工具、Skills 与错误回复"
     parameters: dict = Field(
         default_factory=lambda: {
             "type": "object",
@@ -189,10 +249,29 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
                 },
                 "system_prompt": {
                     "type": "string",
-                    "description": "新的人设 System Prompt 全量文本",
+                    "description": "可选。新的人设 System Prompt 全量文本",
+                },
+                "begin_dialogs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "可选。预设对话文本数组，必须按用户、助手交替排列且数量为偶数；省略表示不修改，空数组表示清空",
+                },
+                "tools": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "description": "可选。允许此人设使用的函数工具名列表；省略表示不修改，null 表示使用全部工具，空数组表示禁用全部工具。MCP 工具也填写工具名",
+                },
+                "skills": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "description": "可选。允许此人设使用的 Skills 名称列表；省略表示不修改，null 表示使用全部 Skills，空数组表示禁用全部 Skills",
+                },
+                "custom_error_message": {
+                    "type": "string",
+                    "description": "可选。此人设请求失败时发送给用户的自定义错误回复；空字符串表示清空",
                 },
             },
-            "required": ["persona_reference", "system_prompt"],
+            "required": ["persona_reference"],
         }
     )
 
@@ -207,12 +286,41 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
 
         event = self._get_event(context)
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
-        system_prompt = self._as_text(kwargs.get("system_prompt", ""))
+
+        async def update_persona():
+            update_kwargs: dict[str, Any] = {}
+            if "system_prompt" in kwargs:
+                update_kwargs["system_prompt"] = self._as_text(
+                    kwargs.get("system_prompt")
+                )
+            if "begin_dialogs" in kwargs:
+                update_kwargs["begin_dialogs"] = self._optional_list(
+                    kwargs.get("begin_dialogs"),
+                    "begin_dialogs",
+                )
+            if "tools" in kwargs:
+                update_kwargs["tools"] = self._optional_list(
+                    kwargs.get("tools"),
+                    "tools",
+                )
+            if "skills" in kwargs:
+                update_kwargs["skills"] = self._optional_list(
+                    kwargs.get("skills"),
+                    "skills",
+                )
+            if "custom_error_message" in kwargs:
+                update_kwargs["custom_error_message"] = self._optional_text(
+                    kwargs.get("custom_error_message"),
+                )
+            return await plugin._update_persona_by_reference(
+                persona_reference,
+                event=event,
+                **update_kwargs,
+            )
+
         return await plugin._run_llm_tool(
             "update",
-            lambda: plugin._update_persona_by_reference(
-                persona_reference, system_prompt, event=event
-            ),
+            update_persona,
             "更新人设失败，请稍后重试。",
         )
 

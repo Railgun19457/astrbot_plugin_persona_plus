@@ -9,6 +9,7 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
 from astrbot.api.star import Context, Star
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.persona_mgr import PersonaManager
+from astrbot.core.sentinels import NOT_GIVEN
 from astrbot.core.star.star_tools import StarTools
 
 from .core.config import PersonaPlusSettings, load_settings
@@ -195,6 +196,8 @@ class PersonaPlus(Star):
 
         try:
             return await runner()
+        except ValueError as exc:
+            return str(exc)
         except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 %s 执行失败", action)
             return failure_message
@@ -215,10 +218,148 @@ class PersonaPlus(Star):
 
         return parts[:-1], parts[-1]
 
+    @staticmethod
+    def _normalize_system_prompt(system_prompt) -> str:
+        system_prompt_text = "" if system_prompt is None else str(system_prompt).strip()
+        if not system_prompt_text:
+            raise ValueError("system_prompt 不能为空。")
+        return system_prompt_text
+
+    @staticmethod
+    def _normalize_begin_dialogs(begin_dialogs) -> list[str] | None:
+        if begin_dialogs is None:
+            return None
+        if not isinstance(begin_dialogs, list):
+            raise ValueError("begin_dialogs 必须是字符串列表。")
+
+        normalized_dialogs: list[str] = []
+        for index, dialog in enumerate(begin_dialogs, start=1):
+            dialog_text = str(dialog).strip()
+            if not dialog_text:
+                raise ValueError(f"begin_dialogs 第 {index} 条不能为空。")
+            normalized_dialogs.append(dialog_text)
+
+        if len(normalized_dialogs) % 2 != 0:
+            raise ValueError("begin_dialogs 数量必须为偶数（用户和助手轮流对话）。")
+
+        return normalized_dialogs
+
+    @staticmethod
+    def _split_scope_text(value: str) -> list[str]:
+        text = value
+        for separator in ("\r", "\n", "，", "、", ";", "；"):
+            text = text.replace(separator, ",")
+        return text.split(",")
+
+    @staticmethod
+    def _normalize_name_scope(value, field_name: str):
+        """规范化工具/技能作用域：None=全部，[]=禁用，列表=仅启用指定项。"""
+
+        if value is NOT_GIVEN or value is None:
+            return value
+
+        if isinstance(value, str):
+            raw_items = PersonaPlus._split_scope_text(value)
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raise ValueError(f"{field_name} 必须是字符串列表、逗号分隔文本或 null。")
+
+        normalized_items: list[str] = []
+        for item in raw_items:
+            item_text = str(item).strip()
+            if item_text and item_text not in normalized_items:
+                normalized_items.append(item_text)
+
+        return normalized_items
+
+    @staticmethod
+    def _normalize_custom_error_message(value):
+        if value is NOT_GIVEN or value is None:
+            return value
+        message = str(value).strip()
+        return message or None
+
+    async def _create_persona_from_spec(
+        self,
+        *,
+        persona_id: str,
+        system_prompt: str,
+        begin_dialogs: list | None = None,
+        folder_id: str | None = None,
+        tools: list | None = None,
+        skills: list | None = None,
+        custom_error_message: str | None = None,
+    ):
+        """统一创建人格，供指令等待流和 LLM Tool 共同调用。"""
+
+        system_prompt_text = self._normalize_system_prompt(system_prompt)
+        normalized_dialogs = self._normalize_begin_dialogs(begin_dialogs)
+        normalized_tools = self._normalize_name_scope(tools, "tools")
+        normalized_skills = self._normalize_name_scope(skills, "skills")
+        normalized_error_message = self._normalize_custom_error_message(
+            custom_error_message
+        )
+
+        await self._ensure_persona_absent(persona_id)
+        await self.persona_mgr.create_persona(
+            persona_id=persona_id,
+            system_prompt=system_prompt_text,
+            begin_dialogs=normalized_dialogs if normalized_dialogs else None,
+            folder_id=folder_id,
+            tools=normalized_tools,
+            skills=normalized_skills,
+            custom_error_message=normalized_error_message,
+        )
+        logger.info("Persona+ 已创建人格 %s", persona_id)
+
+    async def _update_persona_from_spec(
+        self,
+        *,
+        persona_id: str,
+        system_prompt=NOT_GIVEN,
+        begin_dialogs=NOT_GIVEN,
+        tools=NOT_GIVEN,
+        skills=NOT_GIVEN,
+        custom_error_message=NOT_GIVEN,
+    ):
+        """统一更新人格，未传入的字段保持不变。"""
+
+        update_kwargs = {"persona_id": persona_id}
+
+        if system_prompt is not NOT_GIVEN:
+            update_kwargs["system_prompt"] = self._normalize_system_prompt(
+                system_prompt
+            )
+
+        if begin_dialogs is not NOT_GIVEN:
+            normalized_dialogs = self._normalize_begin_dialogs(begin_dialogs)
+            update_kwargs["begin_dialogs"] = normalized_dialogs or []
+
+        if tools is not NOT_GIVEN:
+            update_kwargs["tools"] = self._normalize_name_scope(tools, "tools")
+
+        if skills is not NOT_GIVEN:
+            update_kwargs["skills"] = self._normalize_name_scope(skills, "skills")
+
+        if custom_error_message is not NOT_GIVEN:
+            update_kwargs["custom_error_message"] = (
+                self._normalize_custom_error_message(custom_error_message)
+            )
+
+        if len(update_kwargs) == 1:
+            raise ValueError("没有提供需要更新的内容。")
+
+        await self.persona_mgr.update_persona(**update_kwargs)
+
     async def _update_persona_by_reference(
         self,
         persona_reference: str,
-        system_prompt: str,
+        system_prompt=NOT_GIVEN,
+        begin_dialogs=NOT_GIVEN,
+        tools=NOT_GIVEN,
+        skills=NOT_GIVEN,
+        custom_error_message=NOT_GIVEN,
         event: AstrMessageEvent | None = None,
     ) -> str:
         if event is None:
@@ -232,10 +373,13 @@ class PersonaPlus(Star):
                 persona_reference,
                 require_existing=True,
             )
-        await self.persona_mgr.update_persona(
+        await self._update_persona_from_spec(
             persona_id=resolved_persona_id,
             system_prompt=system_prompt,
-            begin_dialogs=None,
+            begin_dialogs=begin_dialogs,
+            tools=tools,
+            skills=skills,
+            custom_error_message=custom_error_message,
         )
         return f"人格 {resolved_persona_id} 已更新。"
 
@@ -308,7 +452,7 @@ class PersonaPlus(Star):
             begin_dialogs: list | None,
             tools: list | None,
         ) -> None:
-            await self._create_persona(
+            await self._create_persona_from_spec(
                 persona_id=persona_id_,
                 system_prompt=system_prompt,
                 begin_dialogs=begin_dialogs,
@@ -321,10 +465,10 @@ class PersonaPlus(Star):
             system_prompt: str,
             begin_dialogs: list | None,
         ) -> None:
-            await self.persona_mgr.update_persona(
+            await self._update_persona_from_spec(
                 persona_id=persona_id_,
                 system_prompt=system_prompt,
-                begin_dialogs=begin_dialogs if begin_dialogs else None,
+                begin_dialogs=begin_dialogs if begin_dialogs else NOT_GIVEN,
             )
 
         schedule_persona_wait(
@@ -348,17 +492,19 @@ class PersonaPlus(Star):
         begin_dialogs: list | None,
         folder_id: str | None = None,
         tools: list | None = None,
+        skills: list | None = None,
+        custom_error_message: str | None = None,
     ):
         """创建新人格"""
-        await self._ensure_persona_absent(persona_id)
-        await self.persona_mgr.create_persona(
+        await self._create_persona_from_spec(
             persona_id=persona_id,
             system_prompt=system_prompt,
-            begin_dialogs=begin_dialogs if begin_dialogs else None,
+            begin_dialogs=begin_dialogs,
             folder_id=folder_id,
             tools=tools,
+            skills=skills,
+            custom_error_message=custom_error_message,
         )
-        logger.info("Persona+ 已创建人格 %s", persona_id)
 
     async def _ensure_persona_absent(self, persona_id: str) -> None:
         """确认人格不存在，已存在则给出明确提示。"""
@@ -569,9 +715,7 @@ class PersonaPlus(Star):
     def _build_persona_brief_line(persona) -> str:
         begin_cnt = len(getattr(persona, "begin_dialogs", None) or [])
         tool_text = PersonaPlus._format_scope_brief(getattr(persona, "tools", None))
-        skill_text = PersonaPlus._format_scope_brief(
-            getattr(persona, "skills", None)
-        )
+        skill_text = PersonaPlus._format_scope_brief(getattr(persona, "skills", None))
         return f"预设对话 {begin_cnt} 条｜工具 {tool_text}｜技能 {skill_text}"
 
     @staticmethod
@@ -600,9 +744,7 @@ class PersonaPlus(Star):
     @staticmethod
     def _indent_text_block(text: str, prefix: str = "  ") -> str:
         lines = text.strip().splitlines() or [""]
-        return "\n".join(
-            f"{prefix}{line}" if line.strip() else "" for line in lines
-        )
+        return "\n".join(f"{prefix}{line}" if line.strip() else "" for line in lines)
 
     @staticmethod
     def _format_dialog_entry(index: int, role: str, content: str) -> list[str]:
@@ -675,7 +817,11 @@ class PersonaPlus(Star):
                 create_missing_folders=create_missing_folders,
             )
         except ValueError as exc:
-            if allow_index and normalized_reference.isdigit() and cached_reference is None:
+            if (
+                allow_index
+                and normalized_reference.isdigit()
+                and cached_reference is None
+            ):
                 raise ValueError(
                     f"未找到人格：{normalized_reference}。如需使用序号，请先执行 list 查看当前编号。"
                 ) from exc
@@ -878,6 +1024,10 @@ class PersonaPlus(Star):
         self,
         persona_reference: str,
         system_prompt: str,
+        begin_dialogs: list | None = None,
+        tools: list | None = None,
+        skills: list | None = None,
+        custom_error_message: str | None = None,
     ) -> str:
         folder_id, resolved_persona_id = await self._resolve_persona_reference(
             persona_reference,
@@ -885,16 +1035,14 @@ class PersonaPlus(Star):
             create_missing_folders=True,
         )
 
-        system_prompt_text = system_prompt.strip()
-        if not system_prompt_text:
-            raise ValueError("system_prompt 不能为空。")
-
-        await self._create_persona(
+        await self._create_persona_from_spec(
             persona_id=resolved_persona_id,
-            system_prompt=system_prompt_text,
-            begin_dialogs=None,
+            system_prompt=system_prompt,
+            begin_dialogs=begin_dialogs,
             folder_id=folder_id,
-            tools=None,
+            tools=tools,
+            skills=skills,
+            custom_error_message=custom_error_message,
         )
 
         return f"人格 {resolved_persona_id} 已创建。"
