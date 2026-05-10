@@ -428,19 +428,19 @@ class PersonaPlus(Star):
         depth: int = 0,
     ) -> list[str]:
         lines: list[str] = []
-        prefix = "│ " * depth
+        prefix = "  " * depth
 
         for folder in folder_tree:
-            lines.append(f"{prefix}├ 📁 {folder['name']}/")
+            lines.append(f"{prefix}📁 {folder['name']}/")
 
-            folder_personas = personas_by_folder.get(folder["folder_id"], [])
-            child_prefix = "│ " * (depth + 1)
+            folder_personas = PersonaPlus._sort_personas(
+                personas_by_folder.get(folder["folder_id"], [])
+            )
+            child_prefix = "  " * (depth + 1)
 
             for persona in folder_personas:
-                tool_cnt = "ALL" if persona.tools is None else len(persona.tools)
-                skill_cnt = "ALL" if persona.skills is None else len(persona.skills)
-                lines.append(
-                    f"{child_prefix}├ 👤 {persona.persona_id} | 工具: {tool_cnt} | Skills: {skill_cnt}"
+                lines.extend(
+                    PersonaPlus._build_persona_list_lines(persona, child_prefix)
                 )
 
             children = folder.get("children", [])
@@ -454,6 +454,81 @@ class PersonaPlus(Star):
                 )
 
         return lines
+
+    @staticmethod
+    def _collect_folder_ids(folder_tree: list[dict]) -> set[str]:
+        folder_ids: set[str] = set()
+
+        for folder in folder_tree:
+            folder_id = folder.get("folder_id")
+            if folder_id:
+                folder_ids.add(folder_id)
+            folder_ids.update(
+                PersonaPlus._collect_folder_ids(folder.get("children", []))
+            )
+
+        return folder_ids
+
+    @staticmethod
+    def _sort_personas(personas: list) -> list:
+        return sorted(
+            personas,
+            key=lambda persona: (
+                getattr(persona, "sort_order", 0),
+                str(getattr(persona, "persona_id", "")).casefold(),
+            ),
+        )
+
+    @staticmethod
+    def _format_scope_brief(items: list[str] | None) -> str:
+        if items is None:
+            return "全部"
+        if not items:
+            return "禁用"
+        return f"{len(items)} 项"
+
+    @staticmethod
+    def _format_scope_detail(items: list[str] | None) -> str:
+        if items is None:
+            return "全部"
+        if not items:
+            return "已禁用"
+        if len(items) <= 4:
+            return "、".join(items)
+        preview = "、".join(items[:4])
+        return f"{preview} 等 {len(items)} 项"
+
+    @staticmethod
+    def _build_persona_brief_line(persona) -> str:
+        begin_cnt = len(getattr(persona, "begin_dialogs", None) or [])
+        tool_text = PersonaPlus._format_scope_brief(getattr(persona, "tools", None))
+        skill_text = PersonaPlus._format_scope_brief(
+            getattr(persona, "skills", None)
+        )
+        return (
+            f"预设对话：{begin_cnt} 条｜工具：{tool_text}｜技能：{skill_text}"
+        )
+
+    @staticmethod
+    def _build_persona_list_lines(persona, indent: str = "") -> list[str]:
+        return [
+            f"{indent}👤 {persona.persona_id}",
+            f"{indent}  {PersonaPlus._build_persona_brief_line(persona)}",
+        ]
+
+    @staticmethod
+    def _indent_text_block(text: str, prefix: str = "  ") -> str:
+        lines = text.strip().splitlines() or [""]
+        return "\n".join(
+            f"{prefix}{line}" if line.strip() else "" for line in lines
+        )
+
+    @staticmethod
+    def _format_dialog_entry(index: int, role: str, content: str) -> list[str]:
+        return [
+            f"{index}. {role}",
+            PersonaPlus._indent_text_block(content, prefix="   "),
+        ]
 
     async def _resolve_persona_reference(
         self,
@@ -502,11 +577,12 @@ class PersonaPlus(Star):
         # 先按文件夹分组，避免在树形渲染时反复扫描全量人格列表。
         personas = await self.persona_mgr.get_all_personas()
         if not personas:
-            return "当前没有人格，请先在控制台或通过指令创建。"
+            return "当前还没有人格，请先创建一个。"
 
         folder_tree = await self.persona_mgr.get_folder_tree()
         target_tree = folder_tree
-        header = "已载入人格："
+        visible_personas = personas
+        header = f"【人格列表】共 {len(personas)} 个"
 
         if folder_path:
             normalized_folder_path = folder_path.strip().replace("\\", "/").strip("/")
@@ -517,7 +593,13 @@ class PersonaPlus(Star):
                 raise ValueError(f"未找到文件夹路径：{folder_path}")
 
             target_tree = [folder_node]
-            header = f"文件夹 {normalized_folder_path or '根目录'} 下的人格："
+            visible_folder_ids = self._collect_folder_ids(target_tree)
+            visible_personas = [
+                persona
+                for persona in personas
+                if getattr(persona, "folder_id", None) in visible_folder_ids
+            ]
+            header = f"【人格列表】{normalized_folder_path or '根目录'}（{len(visible_personas)} 个）"
 
         personas_by_folder: dict[str, list] = defaultdict(list)
         for persona in personas:
@@ -528,30 +610,20 @@ class PersonaPlus(Star):
         lines = [header]
         tree_lines = self._build_folder_tree_output(target_tree, personas_by_folder)
         if tree_lines:
+            lines.append("")
             lines.extend(tree_lines)
-        elif not folder_path:
-            lines.append("- 当前没有已组织的文件夹人格")
+        elif folder_path:
+            lines.extend(["", "（当前文件夹下还没有人格）"])
 
         if not folder_path:
-            root_personas = [p for p in personas if p.folder_id is None]
+            root_personas = self._sort_personas(
+                [persona for persona in personas if persona.folder_id is None]
+            )
             if root_personas:
-                if tree_lines:
-                    lines.append("")
+                lines.extend(["", "【根目录】"])
                 for persona in root_personas:
-                    begin_cnt = len(persona.begin_dialogs or [])
-                    tool_cnt = (
-                        len(persona.tools or []) if persona.tools is not None else "ALL"
-                    )
-                    skill_cnt = (
-                        len(persona.skills or [])
-                        if persona.skills is not None
-                        else "ALL"
-                    )
-                    lines.append(
-                        f"👤 {persona.persona_id} | 预设对话: {begin_cnt} | 工具: {tool_cnt} | Skills: {skill_cnt}"
-                    )
+                    lines.extend(self._build_persona_list_lines(persona, "  "))
 
-        lines.append(f"\n共 {len(personas)} 个人格")
         return "\n".join(lines)
 
     async def _render_persona_detail_text(self, persona_reference: str) -> str:
@@ -567,41 +639,32 @@ class PersonaPlus(Star):
         folder_path = await self._get_folder_path_by_id(
             getattr(persona, "folder_id", None)
         )
-        sort_order = getattr(persona, "sort_order", 0)
         custom_error_message = getattr(persona, "custom_error_message", None)
+        begin_dialog_count = len(begin_dialogs)
 
         lines = [
-            f"人格 {persona.persona_id}",
-            "----------------",
-            f"文件夹：{folder_path}",
-            f"排序：{sort_order}",
-            "System Prompt:",
-            persona.system_prompt,
+            f"【人格预览】{persona.persona_id}",
+            "",
+            "【基础信息】",
+            f"- 路径：{folder_path}",
+            f"- 预设对话：{begin_dialog_count} 条",
+            f"- 工具：{self._format_scope_detail(tools)}",
+            f"- 技能：{self._format_scope_detail(skills)}",
+            "",
+            "【System Prompt】",
+            self._indent_text_block(persona.system_prompt),
         ]
 
         if begin_dialogs:
-            lines.append("\n预设对话：")
+            lines.extend(["", "【预设对话】"])
             for idx, dialog in enumerate(begin_dialogs, start=1):
                 role = "用户" if idx % 2 == 1 else "助手"
-                lines.append(f"[{role}] {dialog}")
-
-        if tools is None:
-            lines.append("\n工具：使用全部可用工具")
-        elif len(tools) == 0:
-            lines.append("\n工具：已禁用所有工具")
-        else:
-            lines.append("\n工具：" + ", ".join(tools))
-
-        if skills is None:
-            lines.append("\nSkills：使用全部可用 Skills")
-        elif len(skills) == 0:
-            lines.append("\nSkills：已禁用所有 Skills")
-        else:
-            lines.append("\nSkills：" + ", ".join(skills))
+                lines.extend(self._format_dialog_entry(idx, role, dialog))
 
         if custom_error_message:
-            lines.append("\n自定义错误回复：")
-            lines.append(custom_error_message)
+            lines.extend(
+                ["", "【错误回复】", self._indent_text_block(custom_error_message)]
+            )
 
         return "\n".join(lines)
 
@@ -712,20 +775,32 @@ class PersonaPlus(Star):
         cmd_alias_plus = f"{prefix}persona+"
 
         sections = [
-            "Persona+ 帮助信息",
-            f"基础指令：{cmd_base}  {cmd_alias_pp}  {cmd_alias_plus}，三者等效，可互相替换",
-            f" {cmd_alias_pp} 人格ID 或 文件夹/人格ID — 切换到指定人格",
-            f" {cmd_alias_pp} help — 查看帮助与配置说明",
-            f" {cmd_alias_pp} list [文件夹路径] — 列出所有人格或指定文件夹下的人格",
-            f" {cmd_alias_pp} view <文件夹/人格ID> — 查看人格详情",
-            f" {cmd_alias_pp} create <文件夹/人格ID> — 创建新人格，随后发送文本内容或上传文本文件",
-            f" {cmd_alias_pp} update <文件夹/人格ID> — 更新人格，随后发送文本内容或上传文本文件",
-            f" {cmd_alias_pp} avatar <文件夹/人格ID> — 上传人格头像，随后发送图片",
-            f" {cmd_alias_pp} delete <文件夹/人格ID> — 删除人格 (管理员)",
+            "【Persona+ 指令】",
+            f"别名：{cmd_base} / {cmd_alias_pp} / {cmd_alias_plus}",
             "",
-            f"提示：文件夹路径使用 / 分隔，例如：{cmd_alias_pp} create 测试人格/测试。",
-            "提示：在多数情况下，可以省略文件夹路径直接使用人格 ID做为命令参数。",
-            "提示：创建/更新人格时，可以直接发送文本，或上传 .txt/.md 等文本文件。",
+            "【快捷切换】",
+            f"{cmd_alias_pp} <人格ID>",
+            f"{cmd_alias_pp} <文件夹/人格ID>",
+            "",
+            "【查看与切换】",
+            f"{cmd_alias_pp} list [文件夹路径]",
+            f"{cmd_alias_pp} view <文件夹/人格ID>",
+            "",
+            "【编辑】",
+            f"{cmd_alias_pp} create <文件夹/人格ID>",
+            f"{cmd_alias_pp} update <文件夹/人格ID>",
+            f"{cmd_alias_pp} avatar <文件夹/人格ID>",
+            f"{cmd_alias_pp} delete <文件夹/人格ID>  (管理员)",
+            "",
+            "【示例】",
+            f"{cmd_alias_pp} 女仆",
+            f"{cmd_alias_pp} view 测试人格/女仆",
+            f"{cmd_alias_pp} create 测试人格/新角色",
+            "",
+            "【说明】",
+            "1. 文件夹路径使用 / 分隔",
+            "2. 大多数情况下可直接使用人格 ID，不必带文件夹路径",
+            "3. create / update 后可直接发送文本，或上传 .txt / .md 等文本文件",
         ]
         yield event.plain_result("\n".join(sections))
 
@@ -798,7 +873,7 @@ class PersonaPlus(Star):
             yield event.plain_result(str(exc))
             return
 
-        yield event.plain_result("请发送人格内容(文本消息或文本文件)")
+        yield event.plain_result("请发送人设内容，可直接发文本或上传文本文件。")
         self._schedule_persona_wait(
             event,
             resolved_persona_id,
@@ -825,7 +900,7 @@ class PersonaPlus(Star):
             yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
             return
 
-        yield event.plain_result("请发送人格头像图片")
+        yield event.plain_result("请发送头像图片。")
         self._schedule_persona_wait(event, resolved_persona_id, "avatar")
         return
 
@@ -847,7 +922,7 @@ class PersonaPlus(Star):
             yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
             return
 
-        yield event.plain_result("请发送新的人格内容(文本消息或文本文件)")
+        yield event.plain_result("请发送新的人设内容，可直接发文本或上传文本文件。")
         self._schedule_persona_wait(event, resolved_persona_id, "update")
         return
 
