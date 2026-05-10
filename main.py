@@ -47,6 +47,7 @@ class PersonaPlus(Star):
         self.auto_switch_announce = True
         self.clear_context_on_switch = False
         self.llm_tool_options: set[str] = set()
+        self._persona_list_index_cache: dict[str, list[str]] = {}
 
         self.qq_sync = QQProfileSync(context)
         self._tasks: set[asyncio.Task] = set()
@@ -218,11 +219,19 @@ class PersonaPlus(Star):
         self,
         persona_reference: str,
         system_prompt: str,
+        event: AstrMessageEvent | None = None,
     ) -> str:
-        _, resolved_persona_id = await self._resolve_persona_reference(
-            persona_reference,
-            require_existing=True,
-        )
+        if event is None:
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_reference,
+                require_existing=True,
+            )
+        else:
+            _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+                event,
+                persona_reference,
+                require_existing=True,
+            )
         await self.persona_mgr.update_persona(
             persona_id=resolved_persona_id,
             system_prompt=system_prompt,
@@ -230,11 +239,22 @@ class PersonaPlus(Star):
         )
         return f"人格 {resolved_persona_id} 已更新。"
 
-    async def _delete_persona_by_reference(self, persona_reference: str) -> str:
-        _, resolved_persona_id = await self._resolve_persona_reference(
-            persona_reference,
-            require_existing=True,
-        )
+    async def _delete_persona_by_reference(
+        self,
+        persona_reference: str,
+        event: AstrMessageEvent | None = None,
+    ) -> str:
+        if event is None:
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_reference,
+                require_existing=True,
+            )
+        else:
+            _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+                event,
+                persona_reference,
+                require_existing=True,
+            )
         await self.persona_mgr.delete_persona(resolved_persona_id)
         self._delete_persona_artifacts(resolved_persona_id)
         return f"人格 {resolved_persona_id} 已删除。"
@@ -254,7 +274,8 @@ class PersonaPlus(Star):
         event: AstrMessageEvent,
         persona_reference: str,
     ) -> str:
-        _, resolved_persona_id = await self._resolve_persona_reference(
+        _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+            event,
             persona_reference,
             require_existing=True,
         )
@@ -358,7 +379,8 @@ class PersonaPlus(Star):
     ) -> MessageEventResult | None:
         """切换对话或配置中的默认人格。"""
 
-        _, resolved_persona_id = await self._resolve_persona_reference(
+        _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+            event,
             persona_id,
             require_existing=True,
         )
@@ -425,35 +447,80 @@ class PersonaPlus(Star):
     def _build_folder_tree_output(
         folder_tree: list[dict],
         personas_by_folder: dict[str, list],
-        depth: int = 0,
-    ) -> list[str]:
+        start_index: int = 1,
+    ) -> tuple[list[str], list[str], int]:
         lines: list[str] = []
-        prefix = "  " * depth
+        ordered_persona_refs: list[str] = []
+        current_index = start_index
 
-        for folder in folder_tree:
-            lines.append(f"{prefix}📁 {folder['name']}/")
-
-            folder_personas = PersonaPlus._sort_personas(
-                personas_by_folder.get(folder["folder_id"], [])
+        for index, folder in enumerate(folder_tree):
+            is_last_folder = index == len(folder_tree) - 1
+            folder_lines, folder_refs, current_index = (
+                PersonaPlus._build_folder_tree_node_output(
+                    folder,
+                    personas_by_folder,
+                    prefix="",
+                    is_last=is_last_folder,
+                    start_index=current_index,
+                )
             )
-            child_prefix = "  " * (depth + 1)
+            lines.extend(folder_lines)
+            ordered_persona_refs.extend(folder_refs)
 
-            for persona in folder_personas:
-                lines.extend(
-                    PersonaPlus._build_persona_list_lines(persona, child_prefix)
+        return lines, ordered_persona_refs, current_index
+
+    @staticmethod
+    def _build_folder_tree_node_output(
+        folder: dict,
+        personas_by_folder: dict[str, list],
+        prefix: str,
+        is_last: bool,
+        start_index: int,
+    ) -> tuple[list[str], list[str], int]:
+        lines: list[str] = []
+        ordered_persona_refs: list[str] = []
+        current_index = start_index
+        branch = "└─ " if is_last else "├─ "
+        lines.append(
+            f"{prefix}{branch}{PersonaPlus._build_folder_label(folder['name'])}"
+        )
+
+        child_prefix = prefix + ("   " if is_last else "│  ")
+        folder_personas = PersonaPlus._sort_personas(
+            personas_by_folder.get(folder["folder_id"], [])
+        )
+        children = folder.get("children", [])
+        child_count = len(folder_personas) + len(children)
+        child_index = 0
+
+        for persona in folder_personas:
+            child_index += 1
+            lines.extend(
+                PersonaPlus._build_persona_list_lines(
+                    persona,
+                    child_prefix,
+                    current_index,
+                    is_last=child_index == child_count,
                 )
+            )
+            ordered_persona_refs.append(persona.persona_id)
+            current_index += 1
 
-            children = folder.get("children", [])
-            if children:
-                lines.extend(
-                    PersonaPlus._build_folder_tree_output(
-                        children,
-                        personas_by_folder,
-                        depth + 1,
-                    )
+        for child_folder in children:
+            child_index += 1
+            child_lines, child_refs, current_index = (
+                PersonaPlus._build_folder_tree_node_output(
+                    child_folder,
+                    personas_by_folder,
+                    prefix=child_prefix,
+                    is_last=child_index == child_count,
+                    start_index=current_index,
                 )
+            )
+            lines.extend(child_lines)
+            ordered_persona_refs.extend(child_refs)
 
-        return lines
+        return lines, ordered_persona_refs, current_index
 
     @staticmethod
     def _collect_folder_ids(folder_tree: list[dict]) -> set[str]:
@@ -505,15 +572,29 @@ class PersonaPlus(Star):
         skill_text = PersonaPlus._format_scope_brief(
             getattr(persona, "skills", None)
         )
-        return (
-            f"预设对话：{begin_cnt} 条｜工具：{tool_text}｜技能：{skill_text}"
-        )
+        return f"预设对话 {begin_cnt} 条｜工具 {tool_text}｜技能 {skill_text}"
 
     @staticmethod
-    def _build_persona_list_lines(persona, indent: str = "") -> list[str]:
+    def _build_folder_label(folder_name: str) -> str:
+        return f"📁 {folder_name}/"
+
+    @staticmethod
+    def _build_persona_list_lines(
+        persona,
+        indent: str = "",
+        index: int | None = None,
+        is_last: bool = True,
+    ) -> list[str]:
+        title = (
+            f"[{index}] {persona.persona_id}"
+            if index is not None
+            else persona.persona_id
+        )
+        branch = "└─ " if is_last else "├─ "
+        detail_prefix = indent + ("   " if is_last else "│  ")
         return [
-            f"{indent}👤 {persona.persona_id}",
-            f"{indent}  {PersonaPlus._build_persona_brief_line(persona)}",
+            f"{indent}{branch}{title}",
+            f"{detail_prefix}└─ {PersonaPlus._build_persona_brief_line(persona)}",
         ]
 
     @staticmethod
@@ -529,6 +610,76 @@ class PersonaPlus(Star):
             f"{index}. {role}",
             PersonaPlus._indent_text_block(content, prefix="   "),
         ]
+
+    @staticmethod
+    def _build_persona_index_cache_key(event: AstrMessageEvent) -> str:
+        return f"{event.unified_msg_origin}:{event.get_sender_id()}"
+
+    def _cache_listed_personas(
+        self,
+        event: AstrMessageEvent | None,
+        persona_references: list[str],
+    ) -> None:
+        if event is None:
+            return
+
+        cache_key = self._build_persona_index_cache_key(event)
+        if persona_references:
+            self._persona_list_index_cache[cache_key] = persona_references
+        else:
+            self._persona_list_index_cache.pop(cache_key, None)
+
+    def _get_cached_persona_reference(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+    ) -> str | None:
+        normalized_reference = persona_reference.strip()
+        if not normalized_reference.isdigit():
+            return None
+
+        cache_key = self._build_persona_index_cache_key(event)
+        cached_references = self._persona_list_index_cache.get(cache_key)
+        if not cached_references:
+            return None
+
+        index = int(normalized_reference)
+        if index < 1 or index > len(cached_references):
+            raise ValueError(
+                f"序号超出范围：{index}。当前可用范围是 1 - {len(cached_references)}。"
+            )
+
+        return cached_references[index - 1]
+
+    async def _resolve_persona_reference_for_event(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+        *,
+        require_existing: bool,
+        create_missing_folders: bool = False,
+        allow_index: bool = True,
+    ) -> tuple[str | None, str]:
+        normalized_reference = self._normalize_persona_reference(persona_reference)
+        cached_reference = None
+        if allow_index:
+            cached_reference = self._get_cached_persona_reference(
+                event,
+                normalized_reference,
+            )
+
+        try:
+            return await self._resolve_persona_reference(
+                cached_reference or normalized_reference,
+                require_existing=require_existing,
+                create_missing_folders=create_missing_folders,
+            )
+        except ValueError as exc:
+            if allow_index and normalized_reference.isdigit() and cached_reference is None:
+                raise ValueError(
+                    f"未找到人格：{normalized_reference}。如需使用序号，请先执行 list 查看当前编号。"
+                ) from exc
+            raise
 
     async def _resolve_persona_reference(
         self,
@@ -573,7 +724,11 @@ class PersonaPlus(Star):
             current = folders.get(current.parent_id)
         return "/".join(reversed(parts)) if parts else "根目录"
 
-    async def _render_persona_list_text(self, folder_path: str | None = None) -> str:
+    async def _render_persona_list_text(
+        self,
+        folder_path: str | None = None,
+        event: AstrMessageEvent | None = None,
+    ) -> str:
         # 先按文件夹分组，避免在树形渲染时反复扫描全量人格列表。
         personas = await self.persona_mgr.get_all_personas()
         if not personas:
@@ -582,7 +737,7 @@ class PersonaPlus(Star):
         folder_tree = await self.persona_mgr.get_folder_tree()
         target_tree = folder_tree
         visible_personas = personas
-        header = f"【人格列表】共 {len(personas)} 个"
+        header = f"[人格列表] 共 {len(personas)} 个"
 
         if folder_path:
             normalized_folder_path = folder_path.strip().replace("\\", "/").strip("/")
@@ -599,7 +754,10 @@ class PersonaPlus(Star):
                 for persona in personas
                 if getattr(persona, "folder_id", None) in visible_folder_ids
             ]
-            header = f"【人格列表】{normalized_folder_path or '根目录'}（{len(visible_personas)} 个）"
+            header = (
+                f"[人格列表] {normalized_folder_path or '根目录'}"
+                f"（{len(visible_personas)} 个）"
+            )
 
         personas_by_folder: dict[str, list] = defaultdict(list)
         for persona in personas:
@@ -607,30 +765,78 @@ class PersonaPlus(Star):
             if folder_id:
                 personas_by_folder[folder_id].append(persona)
 
-        lines = [header]
-        tree_lines = self._build_folder_tree_output(target_tree, personas_by_folder)
-        if tree_lines:
-            lines.append("")
-            lines.extend(tree_lines)
-        elif folder_path:
-            lines.extend(["", "（当前文件夹下还没有人格）"])
-
+        root_personas: list = []
         if not folder_path:
             root_personas = self._sort_personas(
                 [persona for persona in personas if persona.folder_id is None]
             )
-            if root_personas:
-                lines.extend(["", "【根目录】"])
-                for persona in root_personas:
-                    lines.extend(self._build_persona_list_lines(persona, "  "))
+
+        lines = [header]
+        ordered_persona_refs: list[str] = []
+        if folder_path:
+            tree_lines, tree_persona_refs, _next_index = self._build_folder_tree_output(
+                target_tree,
+                personas_by_folder,
+            )
+            ordered_persona_refs.extend(tree_persona_refs)
+            if tree_lines:
+                lines.append("")
+                lines.extend(tree_lines)
+            else:
+                lines.extend(["", "（当前文件夹下还没有人格）"])
+        else:
+            lines.extend(["", self._build_folder_label("根目录")])
+            next_index = 1
+            root_child_count = len(root_personas) + len(target_tree)
+            root_child_index = 0
+
+            for persona in root_personas:
+                root_child_index += 1
+                lines.extend(
+                    self._build_persona_list_lines(
+                        persona,
+                        "",
+                        next_index,
+                        is_last=root_child_index == root_child_count,
+                    )
+                )
+                ordered_persona_refs.append(persona.persona_id)
+                next_index += 1
+
+            for folder in target_tree:
+                root_child_index += 1
+                folder_lines, folder_refs, next_index = (
+                    self._build_folder_tree_node_output(
+                        folder,
+                        personas_by_folder,
+                        prefix="",
+                        is_last=root_child_index == root_child_count,
+                        start_index=next_index,
+                    )
+                )
+                lines.extend(folder_lines)
+                ordered_persona_refs.extend(folder_refs)
+
+        self._cache_listed_personas(event, ordered_persona_refs)
 
         return "\n".join(lines)
 
-    async def _render_persona_detail_text(self, persona_reference: str) -> str:
-        _, resolved_persona_id = await self._resolve_persona_reference(
-            persona_reference,
-            require_existing=True,
-        )
+    async def _render_persona_detail_text(
+        self,
+        persona_reference: str,
+        event: AstrMessageEvent | None = None,
+    ) -> str:
+        if event is None:
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_reference,
+                require_existing=True,
+            )
+        else:
+            _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+                event,
+                persona_reference,
+                require_existing=True,
+            )
         persona = await self.persona_mgr.get_persona(resolved_persona_id)
 
         begin_dialogs = persona.begin_dialogs or []
@@ -643,27 +849,27 @@ class PersonaPlus(Star):
         begin_dialog_count = len(begin_dialogs)
 
         lines = [
-            f"【人格预览】{persona.persona_id}",
+            f"[人格预览] {persona.persona_id}",
             "",
-            "【基础信息】",
+            "[基础信息]",
             f"- 路径：{folder_path}",
             f"- 预设对话：{begin_dialog_count} 条",
             f"- 工具：{self._format_scope_detail(tools)}",
             f"- 技能：{self._format_scope_detail(skills)}",
             "",
-            "【System Prompt】",
+            "[System Prompt]",
             self._indent_text_block(persona.system_prompt),
         ]
 
         if begin_dialogs:
-            lines.extend(["", "【预设对话】"])
+            lines.extend(["", "[预设对话]"])
             for idx, dialog in enumerate(begin_dialogs, start=1):
                 role = "用户" if idx % 2 == 1 else "助手"
                 lines.extend(self._format_dialog_entry(idx, role, dialog))
 
         if custom_error_message:
             lines.extend(
-                ["", "【错误回复】", self._indent_text_block(custom_error_message)]
+                ["", "[错误回复]", self._indent_text_block(custom_error_message)]
             )
 
         return "\n".join(lines)
@@ -775,32 +981,33 @@ class PersonaPlus(Star):
         cmd_alias_plus = f"{prefix}persona+"
 
         sections = [
-            "【Persona+ 指令】",
+            "[Persona+ 指令]",
             f"别名：{cmd_base} / {cmd_alias_pp} / {cmd_alias_plus}",
             "",
-            "【快捷切换】",
+            "[快捷切换]",
             f"{cmd_alias_pp} <人格ID>",
             f"{cmd_alias_pp} <文件夹/人格ID>",
             "",
-            "【查看与切换】",
+            "[查看与切换]",
             f"{cmd_alias_pp} list [文件夹路径]",
             f"{cmd_alias_pp} view <文件夹/人格ID>",
             "",
-            "【编辑】",
+            "[编辑]",
             f"{cmd_alias_pp} create <文件夹/人格ID>",
             f"{cmd_alias_pp} update <文件夹/人格ID>",
             f"{cmd_alias_pp} avatar <文件夹/人格ID>",
             f"{cmd_alias_pp} delete <文件夹/人格ID>  (管理员)",
             "",
-            "【示例】",
+            "[示例]",
             f"{cmd_alias_pp} 女仆",
             f"{cmd_alias_pp} view 测试人格/女仆",
             f"{cmd_alias_pp} create 测试人格/新角色",
             "",
-            "【说明】",
+            "[说明]",
             "1. 文件夹路径使用 / 分隔",
             "2. 大多数情况下可直接使用人格 ID，不必带文件夹路径",
-            "3. create / update 后可直接发送文本，或上传 .txt / .md 等文本文件",
+            "3. list 输出的序号可直接用于切换、view、update、avatar、delete",
+            "4. create / update 后可直接发送文本，或上传 .txt / .md 等文本文件",
         ]
         yield event.plain_result("\n".join(sections))
 
@@ -814,7 +1021,9 @@ class PersonaPlus(Star):
             return
 
         try:
-            yield event.plain_result(await self._render_persona_list_text(folder_path))
+            yield event.plain_result(
+                await self._render_persona_list_text(folder_path, event=event)
+            )
         except ValueError as exc:
             yield event.plain_result(str(exc))
 
@@ -828,7 +1037,9 @@ class PersonaPlus(Star):
             return
 
         try:
-            yield event.plain_result(await self._render_persona_detail_text(persona_id))
+            yield event.plain_result(
+                await self._render_persona_detail_text(persona_id, event=event)
+            )
         except ValueError as exc:
             yield event.plain_result(str(exc))
 
@@ -842,17 +1053,15 @@ class PersonaPlus(Star):
             return
 
         try:
-            _, resolved_persona_id = await self._resolve_persona_reference(
+            result_text = await self._delete_persona_by_reference(
                 persona_id,
-                require_existing=True,
+                event=event,
             )
-            await self.persona_mgr.delete_persona(resolved_persona_id)
         except ValueError as exc:
             yield event.plain_result(str(exc))
             return
 
-        self._delete_persona_artifacts(resolved_persona_id)
-        yield event.plain_result(f"人格 {resolved_persona_id} 已删除。")
+        yield event.plain_result(result_text)
 
     @persona_plus.command("create")
     async def cmd_create(self, event: AstrMessageEvent, persona_id: str):
@@ -892,7 +1101,8 @@ class PersonaPlus(Star):
             return
 
         try:
-            _, resolved_persona_id = await self._resolve_persona_reference(
+            _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+                event,
                 persona_id,
                 require_existing=True,
             )
@@ -914,7 +1124,8 @@ class PersonaPlus(Star):
             return
 
         try:
-            _, resolved_persona_id = await self._resolve_persona_reference(
+            _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+                event,
                 persona_id,
                 require_existing=True,
             )

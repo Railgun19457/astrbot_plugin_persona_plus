@@ -56,9 +56,10 @@ class PersonaPlusListTool(_BasePersonaTool):
             return "查看人设列表失败，请稍后重试。"
 
         folder_path = self._as_text(kwargs.get("folder_path", ""))
+        event = self._get_event(context)
         return await plugin._run_llm_tool(
             "list",
-            lambda: plugin._render_persona_list_text(folder_path or None),
+            lambda: plugin._render_persona_list_text(folder_path or None, event=event),
             "查看人设列表失败，请稍后重试。",
         )
 
@@ -124,10 +125,11 @@ class PersonaPlusViewTool(_BasePersonaTool):
         if plugin is None:
             return "查看人设内容失败，请稍后重试。"
 
+        event = self._get_event(context)
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         return await plugin._run_llm_tool(
             "view",
-            lambda: plugin._render_persona_detail_text(persona_reference),
+            lambda: plugin._render_persona_detail_text(persona_reference, event=event),
             "查看人设内容失败，请稍后重试。",
         )
 
@@ -203,12 +205,13 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
         if plugin is None:
             return "更新人设失败，请稍后重试。"
 
+        event = self._get_event(context)
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         system_prompt = self._as_text(kwargs.get("system_prompt", ""))
         return await plugin._run_llm_tool(
             "update",
             lambda: plugin._update_persona_by_reference(
-                persona_reference, system_prompt
+                persona_reference, system_prompt, event=event
             ),
             "更新人设失败，请稍后重试。",
         )
@@ -240,10 +243,11 @@ class PersonaPlusDeleteTool(_BasePersonaTool):
         if plugin is None:
             return "删除人设失败，请稍后重试。"
 
+        event = self._get_event(context)
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         return await plugin._run_llm_tool(
             "delete",
-            lambda: plugin._delete_persona_by_reference(persona_reference),
+            lambda: plugin._delete_persona_by_reference(persona_reference, event=event),
             "删除人设失败，请稍后重试。",
         )
 
