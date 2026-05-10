@@ -355,7 +355,7 @@ class PersonaPlusExportTool(_BasePersonaTool):
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         return await plugin._run_llm_tool(
             "export",
-            lambda: plugin.persona_service.send_export_file(event, persona_reference),
+            lambda: plugin._send_export_file(event, persona_reference),
             "导出人设文件失败，请稍后重试。",
         )
 

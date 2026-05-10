@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageEventResult
+from astrbot.api.event import AstrMessageEvent, MessageChain, MessageEventResult
 from astrbot.core.sentinels import NOT_GIVEN
 
 from .persona_references import PersonaReferenceResolver
@@ -141,30 +142,44 @@ class PersonaService:
         return resolved_persona_id, export_path
 
     @staticmethod
+    def build_export_chain(
+        persona_id: str,
+        export_path: Path,
+    ) -> MessageChain:
+        return MessageChain(
+            chain=[
+                Comp.Plain(f"人格 {persona_id} 已导出为文件：{export_path.name}"),
+                Comp.File(name=export_path.name, file=str(export_path)),
+            ]
+        )
+
+    @staticmethod
     def build_export_result(
         event: AstrMessageEvent,
         persona_id: str,
         export_path: Path,
     ) -> MessageEventResult:
         return event.chain_result(
-            [
-                Comp.Plain(f"人格 {persona_id} 已导出为文件：{export_path.name}"),
-                Comp.File(name=export_path.name, file=str(export_path)),
-            ]
+            PersonaService.build_export_chain(persona_id, export_path).chain
         )
 
     async def send_export_file(
         self,
         event: AstrMessageEvent,
         persona_reference: str,
+        send_message: Callable[[MessageChain], Awaitable[bool | None]] | None = None,
     ) -> str:
         resolved_persona_id, export_path = await self.export_by_reference(
             persona_reference,
             event=event,
         )
-        await event.send(
-            self.build_export_result(event, resolved_persona_id, export_path)
-        )
+        chain = self.build_export_chain(resolved_persona_id, export_path)
+        if send_message is None:
+            await event.send(chain)
+        else:
+            sent = await send_message(chain)
+            if sent is False:
+                raise RuntimeError("未找到当前会话对应的平台，文件未发送。")
         return f"人格 {resolved_persona_id} 已导出并发送为文件 {export_path.name}。"
 
     async def create_from_spec(

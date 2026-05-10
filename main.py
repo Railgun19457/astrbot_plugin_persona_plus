@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, TypeVar
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, MessageEventResult, filter
 from astrbot.api.star import Context, Star
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.persona_mgr import PersonaManager
@@ -257,6 +257,20 @@ class PersonaPlus(Star):
         )
         return f"已切换人格为 {resolved_persona_id}"
 
+    async def _send_export_file(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+    ) -> str:
+        async def send_current_session(message_chain: MessageChain) -> bool | None:
+            return await self.context.send_message(event.session, message_chain)
+
+        return await self.persona_service.send_export_file(
+            event,
+            persona_reference,
+            send_message=send_current_session,
+        )
+
     async def _switch_persona(
         self,
         event: AstrMessageEvent,
@@ -452,22 +466,16 @@ class PersonaPlus(Star):
             return
 
         try:
-            (
-                resolved_persona_id,
-                export_path,
-            ) = await self.persona_service.export_by_reference(
-                persona_id,
-                event=event,
-            )
+            await self._send_export_file(event, persona_id)
         except ValueError as exc:
             yield event.plain_result(str(exc))
             return
+        except Exception:  # noqa: BLE001
+            logger.exception("Persona+ 导出文件发送失败")
+            yield event.plain_result("导出文件发送失败，请稍后重试。")
+            return
 
-        yield self.persona_service.build_export_result(
-            event,
-            resolved_persona_id,
-            export_path,
-        )
+        event.stop_event()
 
     @persona_plus.command("delete")
     async def cmd_delete(self, event: AstrMessageEvent, persona_id: str):
