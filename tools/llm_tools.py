@@ -74,7 +74,7 @@ class PersonaPlusListTool(_BasePersonaTool):
         event = self._get_event(context)
         return await plugin._run_llm_tool(
             "list",
-            lambda: plugin._render_persona_list_text(folder_path or None, event=event),
+            lambda: plugin.renderer.render_list(folder_path or None, event=event),
             "查看人设列表失败，请稍后重试。",
         )
 
@@ -144,7 +144,7 @@ class PersonaPlusViewTool(_BasePersonaTool):
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         return await plugin._run_llm_tool(
             "view",
-            lambda: plugin._render_persona_detail_text(persona_reference, event=event),
+            lambda: plugin.renderer.render_detail(persona_reference, event=event),
             "查看人设内容失败，请稍后重试。",
         )
 
@@ -219,7 +219,7 @@ class PersonaPlusCreateTool(_BasePersonaTool):
             custom_error_message = self._optional_text(
                 kwargs.get("custom_error_message")
             )
-            return await plugin._create_persona_by_reference(
+            return await plugin.persona_service.create_by_reference(
                 persona_reference,
                 system_prompt,
                 begin_dialogs=begin_dialogs,
@@ -312,7 +312,7 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
                 update_kwargs["custom_error_message"] = self._optional_text(
                     kwargs.get("custom_error_message"),
                 )
-            return await plugin._update_persona_by_reference(
+            return await plugin.persona_service.update_by_reference(
                 persona_reference,
                 event=event,
                 **update_kwargs,
@@ -355,7 +355,7 @@ class PersonaPlusExportTool(_BasePersonaTool):
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         return await plugin._run_llm_tool(
             "export",
-            lambda: plugin._send_persona_export_file(event, persona_reference),
+            lambda: plugin.persona_service.send_export_file(event, persona_reference),
             "导出人设文件失败，请稍后重试。",
         )
 
@@ -390,7 +390,10 @@ class PersonaPlusDeleteTool(_BasePersonaTool):
         persona_reference = self._as_text(kwargs.get("persona_reference", ""))
         return await plugin._run_llm_tool(
             "delete",
-            lambda: plugin._delete_persona_by_reference(persona_reference, event=event),
+            lambda: plugin.persona_service.delete_by_reference(
+                persona_reference,
+                event=event,
+            ),
             "删除人设失败，请稍后重试。",
         )
 
