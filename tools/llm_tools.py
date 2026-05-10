@@ -326,6 +326,41 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
 
 
 @pydantic_dataclass
+class PersonaPlusExportTool(_BasePersonaTool):
+    name: str = "persona_plus_export"
+    description: str = "导出指定人设的 System Prompt 为 Markdown 文件并发送给当前会话"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "persona_reference": {
+                    "type": "string",
+                    "description": "要导出的人设 ID，或 文件夹/人设ID 路径",
+                }
+            },
+            "required": ["persona_reference"],
+        }
+    )
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        **kwargs: Any,
+    ) -> ToolExecResult:
+        plugin = self.plugin
+        event = self._get_event(context)
+        if plugin is None or event is None:
+            return "导出人设文件失败，请稍后重试。"
+
+        persona_reference = self._as_text(kwargs.get("persona_reference", ""))
+        return await plugin._run_llm_tool(
+            "export",
+            lambda: plugin._send_persona_export_file(event, persona_reference),
+            "导出人设文件失败，请稍后重试。",
+        )
+
+
+@pydantic_dataclass
 class PersonaPlusDeleteTool(_BasePersonaTool):
     name: str = "persona_plus_delete"
     description: str = "删除指定人设（不可恢复）"
@@ -367,6 +402,7 @@ def build_llm_tools(plugin) -> list[FunctionTool[AstrAgentContext]]:
         PersonaPlusViewTool(),
         PersonaPlusCreateTool(),
         PersonaPlusUpdateTool(),
+        PersonaPlusExportTool(),
         PersonaPlusDeleteTool(),
     ]
     for tool in tools:

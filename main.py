@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from collections import defaultdict
 from pathlib import Path
 
+import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
 from astrbot.api.star import Context, Star
@@ -30,6 +33,7 @@ class PersonaPlus(Star):
         "view": "persona_plus_view",
         "create": "persona_plus_create",
         "update": "persona_plus_update",
+        "export": "persona_plus_export",
         "delete": "persona_plus_delete",
     }
 
@@ -53,10 +57,11 @@ class PersonaPlus(Star):
         self.qq_sync = QQProfileSync(context)
         self._tasks: set[asyncio.Task] = set()
 
-        self.persona_data_dir: Path = (
-            StarTools.get_data_dir("astrbot_plugin_persona_plus") / "persona_files"
-        )
+        plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_persona_plus")
+        self.persona_data_dir: Path = plugin_data_dir / "persona_files"
         self.persona_data_dir.mkdir(parents=True, exist_ok=True)
+        self.persona_export_dir: Path = plugin_data_dir / "persona_exports"
+        self.persona_export_dir.mkdir(parents=True, exist_ok=True)
         self._load_config()
         self._register_llm_tools()
 
@@ -201,6 +206,79 @@ class PersonaPlus(Star):
         except Exception:  # noqa: BLE001
             logger.exception("Persona+ 函数工具 %s 执行失败", action)
             return failure_message
+
+    @staticmethod
+    def _safe_export_file_stem(persona_id: str) -> str:
+        stem = re.sub(r"[^\w.-]+", "_", persona_id, flags=re.UNICODE).strip("._")
+        return (stem or "persona")[:80]
+
+    def _build_persona_export_path(self, persona_id: str) -> Path:
+        digest = hashlib.sha1(persona_id.encode("utf-8")).hexdigest()[:8]
+        return self.persona_export_dir / (
+            f"{self._safe_export_file_stem(persona_id)}_{digest}.md"
+        )
+
+    async def _write_persona_export_file(self, persona) -> Path:
+        persona_id = str(getattr(persona, "persona_id", "") or "persona")
+        system_prompt = str(getattr(persona, "system_prompt", "") or "").strip()
+        if not system_prompt:
+            raise ValueError(f"人格 {persona_id} 的 System Prompt 为空，无法导出。")
+
+        export_path = self._build_persona_export_path(persona_id)
+        export_content = f"{system_prompt.rstrip()}\n"
+        await asyncio.to_thread(
+            export_path.write_text, export_content, encoding="utf-8"
+        )
+        logger.info("Persona+ 已导出人格 %s 至 %s", persona_id, export_path)
+        return export_path
+
+    async def _export_persona_file_by_reference(
+        self,
+        persona_reference: str,
+        event: AstrMessageEvent | None = None,
+    ) -> tuple[str, Path]:
+        if event is None:
+            _, resolved_persona_id = await self._resolve_persona_reference(
+                persona_reference,
+                require_existing=True,
+            )
+        else:
+            _, resolved_persona_id = await self._resolve_persona_reference_for_event(
+                event,
+                persona_reference,
+                require_existing=True,
+            )
+
+        persona = await self.persona_mgr.get_persona(resolved_persona_id)
+        export_path = await self._write_persona_export_file(persona)
+        return resolved_persona_id, export_path
+
+    @staticmethod
+    def _build_persona_export_result(
+        event: AstrMessageEvent,
+        persona_id: str,
+        export_path: Path,
+    ) -> MessageEventResult:
+        return event.chain_result(
+            [
+                Comp.Plain(f"人格 {persona_id} 已导出为文件：{export_path.name}"),
+                Comp.File(name=export_path.name, file=str(export_path)),
+            ]
+        )
+
+    async def _send_persona_export_file(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+    ) -> str:
+        resolved_persona_id, export_path = await self._export_persona_file_by_reference(
+            persona_reference,
+            event=event,
+        )
+        await event.send(
+            self._build_persona_export_result(event, resolved_persona_id, export_path)
+        )
+        return f"人格 {resolved_persona_id} 已导出并发送为文件 {export_path.name}。"
 
     @staticmethod
     def _normalize_persona_reference(persona_reference: str) -> str:
@@ -412,6 +490,14 @@ class PersonaPlus(Star):
                 logger.info("Persona+ 已删除人格 %s 的文本缓存", persona_id)
             except OSError as exc:
                 logger.warning("Persona+ 删除人格 %s 文本缓存失败：%s", persona_id, exc)
+
+        export_file = self._build_persona_export_path(persona_id)
+        if export_file.exists():
+            try:
+                export_file.unlink()
+                logger.info("Persona+ 已删除人格 %s 的导出文件", persona_id)
+            except OSError as exc:
+                logger.warning("Persona+ 删除人格 %s 导出文件失败：%s", persona_id, exc)
 
     async def _switch_persona_by_reference(
         self,
@@ -1084,6 +1170,7 @@ class PersonaPlus(Star):
             "create",
             "avatar",
             "update",
+            "export",
         }
         if persona_id.lower() in known_subcommands:
             return
@@ -1139,6 +1226,7 @@ class PersonaPlus(Star):
             "[查看与切换]",
             f"{cmd_alias_pp} list [文件夹路径]",
             f"{cmd_alias_pp} view <文件夹/人格ID>",
+            f"{cmd_alias_pp} export <文件夹/人格ID>",
             "",
             "[编辑]",
             f"{cmd_alias_pp} create <文件夹/人格ID>",
@@ -1149,12 +1237,13 @@ class PersonaPlus(Star):
             "[示例]",
             f"{cmd_alias_pp} 女仆",
             f"{cmd_alias_pp} view 测试人格/女仆",
+            f"{cmd_alias_pp} export 测试人格/女仆",
             f"{cmd_alias_pp} create 测试人格/新角色",
             "",
             "[说明]",
             "1. 文件夹路径使用 / 分隔",
             "2. 大多数情况下可直接使用人格 ID，不必带文件夹路径",
-            "3. list 输出的序号可直接用于切换、view、update、avatar、delete",
+            "3. list 输出的序号可直接用于切换、view、export、update、avatar、delete",
             "4. create / update 后可直接发送文本，或上传 .txt / .md 等文本文件",
         ]
         yield event.plain_result("\n".join(sections))
@@ -1190,6 +1279,29 @@ class PersonaPlus(Star):
             )
         except ValueError as exc:
             yield event.plain_result(str(exc))
+
+    @persona_plus.command("export")
+    async def cmd_export(self, event: AstrMessageEvent, persona_id: str):
+        """导出指定人格的 System Prompt 文件。"""
+
+        has_perm, err_msg = self.check_permission(event, "export")
+        if not has_perm:
+            yield event.plain_result(err_msg)
+            return
+
+        try:
+            (
+                resolved_persona_id,
+                export_path,
+            ) = await self._export_persona_file_by_reference(
+                persona_id,
+                event=event,
+            )
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+
+        yield self._build_persona_export_result(event, resolved_persona_id, export_path)
 
     @persona_plus.command("delete")
     async def cmd_delete(self, event: AstrMessageEvent, persona_id: str):

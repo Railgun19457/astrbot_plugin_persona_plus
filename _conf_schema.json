@@ -32,14 +32,14 @@
     "description": "需要管理员权限的指令列表",
     "hint": "勾选表示该指令需要管理员权限执行。",
     "type": "list",
-    "options": ["switch", "create", "update", "delete", "view", "list", "help", "avatar"],
-    "default": ["create", "update", "delete", "avatar"]
+    "options": ["switch", "create", "update", "delete", "export", "view", "list", "help", "avatar"],
+    "default": ["create", "update", "delete", "avatar","export"]
   },
   "llm_tool_options": {
     "description": "函数工具选项",
-    "hint": "细分控制向 LLM 暴露的人格管理函数工具：list(列表)、switch(切换)、view(详情)、create(创建)、update(更新)、delete(删除)。未勾选项不会暴露。",
+    "hint": "细分控制向 LLM 暴露的人格管理函数工具：list(列表)、switch(切换)、view(详情)、create(创建)、update(更新)、export(导出)、delete(删除)。未勾选项不会暴露。",
     "type": "list",
-    "options": ["list", "switch", "view", "create", "update", "delete"],
+    "options": ["list", "switch", "view", "create", "update", "export", "delete"],
     "default": []
   },
   "enable_auto_switch_announce": {
