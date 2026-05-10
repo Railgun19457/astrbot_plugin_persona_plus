@@ -14,6 +14,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.sentinels import NOT_GIVEN
 from astrbot.core.star.star_tools import StarTools
+from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from .core.config import PersonaPlusSettings, load_settings
 from .core.keyword_switch import match_keyword
@@ -60,7 +61,11 @@ class PersonaPlus(Star):
         plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_persona_plus")
         self.persona_data_dir: Path = plugin_data_dir / "persona_files"
         self.persona_data_dir.mkdir(parents=True, exist_ok=True)
-        self.persona_export_dir: Path = plugin_data_dir / "persona_exports"
+        self.persona_export_dir: Path = (
+            Path(get_astrbot_temp_path())
+            / "astrbot_plugin_persona_plus"
+            / "persona_exports"
+        )
         self.persona_export_dir.mkdir(parents=True, exist_ok=True)
         self._load_config()
         self._register_llm_tools()
