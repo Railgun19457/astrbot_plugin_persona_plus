@@ -4,6 +4,11 @@
   - [x] 提供tool，让ai可以直接创建/修改人格
   - [x] 支持向用户发送文件形式的人设文件
 
+#### v1.4.5
+  - 将全部 LLM Tool 名称由 `persona_plus_*` 简化为 `persona_*`
+  - 更新函数工具说明文档，统一使用 `persona_create`、`persona_update` 等新名称
+  - 卸载函数工具时兼容清理旧版 `persona_plus_*` 工具注册
+
 #### v1.4.4
   - 修复 `pp export` 导出文件只出现发送日志但平台未实际收到的问题
   - 导出文件发送改为复用当前会话主动发送链路，提升 OneBot 与 WebChat 等平台兼容性

@@ -47,7 +47,7 @@ class _BasePersonaTool(FunctionTool[AstrAgentContext]):
 
 @pydantic_dataclass
 class PersonaPlusListTool(_BasePersonaTool):
-    name: str = "persona_plus_list"
+    name: str = "persona_list"
     description: str = "按文件夹范围查询可用人设列表"
     parameters: dict = Field(
         default_factory=lambda: {
@@ -81,7 +81,7 @@ class PersonaPlusListTool(_BasePersonaTool):
 
 @pydantic_dataclass
 class PersonaPlusSwitchTool(_BasePersonaTool):
-    name: str = "persona_plus_switch"
+    name: str = "persona_switch"
     description: str = "切换当前会话的人设"
     parameters: dict = Field(
         default_factory=lambda: {
@@ -116,7 +116,7 @@ class PersonaPlusSwitchTool(_BasePersonaTool):
 
 @pydantic_dataclass
 class PersonaPlusViewTool(_BasePersonaTool):
-    name: str = "persona_plus_view"
+    name: str = "persona_view"
     description: str = "查看单个人设的完整详情"
     parameters: dict = Field(
         default_factory=lambda: {
@@ -151,7 +151,7 @@ class PersonaPlusViewTool(_BasePersonaTool):
 
 @pydantic_dataclass
 class PersonaPlusCreateTool(_BasePersonaTool):
-    name: str = "persona_plus_create"
+    name: str = "persona_create"
     description: str = (
         "创建新人设，并可完整配置预设对话、工具、MCP 工具、Skills 与错误回复"
     )
@@ -237,7 +237,7 @@ class PersonaPlusCreateTool(_BasePersonaTool):
 
 @pydantic_dataclass
 class PersonaPlusUpdateTool(_BasePersonaTool):
-    name: str = "persona_plus_update"
+    name: str = "persona_update"
     description: str = "更新已存在人设，可修改 system prompt、预设对话、工具、MCP 工具、Skills 与错误回复"
     parameters: dict = Field(
         default_factory=lambda: {
@@ -327,7 +327,7 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
 
 @pydantic_dataclass
 class PersonaPlusExportTool(_BasePersonaTool):
-    name: str = "persona_plus_export"
+    name: str = "persona_export"
     description: str = "导出指定人设的 System Prompt 为 Markdown 文件并发送给当前会话"
     parameters: dict = Field(
         default_factory=lambda: {
@@ -362,7 +362,7 @@ class PersonaPlusExportTool(_BasePersonaTool):
 
 @pydantic_dataclass
 class PersonaPlusDeleteTool(_BasePersonaTool):
-    name: str = "persona_plus_delete"
+    name: str = "persona_delete"
     description: str = "删除指定人设（不可恢复）"
     parameters: dict = Field(
         default_factory=lambda: {

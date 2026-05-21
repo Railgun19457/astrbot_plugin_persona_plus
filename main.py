@@ -31,13 +31,13 @@ class PersonaPlus(Star):
     """Persona+ plugin entrypoint for lifecycle, commands, and event routing."""
 
     LLM_TOOL_NAME_BY_OPTION = {
-        "list": "persona_plus_list",
-        "switch": "persona_plus_switch",
-        "view": "persona_plus_view",
-        "create": "persona_plus_create",
-        "update": "persona_plus_update",
-        "export": "persona_plus_export",
-        "delete": "persona_plus_delete",
+        "list": "persona_list",
+        "switch": "persona_switch",
+        "view": "persona_view",
+        "create": "persona_create",
+        "update": "persona_update",
+        "export": "persona_export",
+        "delete": "persona_delete",
     }
     QUICK_SWITCH_ALIASES = {"pp", "persona_plus", "persona+"}
     KNOWN_SUBCOMMANDS = {
@@ -97,12 +97,16 @@ class PersonaPlus(Star):
         """Remove function tools registered by this plugin."""
 
         tool_mgr = self.context.get_llm_tool_manager()
-        persona_plus_tool_names = set(self.LLM_TOOL_NAME_BY_OPTION.values())
+        persona_tool_names = set(self.LLM_TOOL_NAME_BY_OPTION.values())
+        persona_tool_names.update(
+            name.replace("persona_", "persona_plus_", 1)
+            for name in self.LLM_TOOL_NAME_BY_OPTION.values()
+        )
         tool_mgr.func_list = [
             tool
             for tool in tool_mgr.func_list
             if not (
-                tool.name in persona_plus_tool_names
+                tool.name in persona_tool_names
                 and getattr(tool, "handler_module_path", None) == self.__module__
             )
         ]

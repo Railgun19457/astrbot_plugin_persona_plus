@@ -63,17 +63,17 @@ Persona+ 提供两类入口：
 
 | 配置值 | 暴露工具 | 能力 |
 | --- | --- | --- |
-| `list` | `persona_plus_list` | 查询人格列表 |
-| `switch` | `persona_plus_switch` | 切换当前会话人格 |
-| `view` | `persona_plus_view` | 查看人格详情 |
-| `create` | `persona_plus_create` | 创建人格，支持完整字段 |
-| `update` | `persona_plus_update` | 更新人格，支持按字段修改 |
-| `export` | `persona_plus_export` | 导出人格 System Prompt 文件 |
-| `delete` | `persona_plus_delete` | 删除人格 |
+| `list` | `persona_list` | 查询人格列表 |
+| `switch` | `persona_switch` | 切换当前会话人格 |
+| `view` | `persona_view` | 查看人格详情 |
+| `create` | `persona_create` | 创建人格，支持完整字段 |
+| `update` | `persona_update` | 更新人格，支持按字段修改 |
+| `export` | `persona_export` | 导出人格 System Prompt 文件 |
+| `delete` | `persona_delete` | 删除人格 |
 
 ### 完整创建/更新字段
 
-`persona_plus_create` 与 `persona_plus_update` 支持以下字段：
+`persona_create` 与 `persona_update` 支持以下字段：
 
 | 字段 | 创建 | 更新 | 说明 |
 | --- | --- | --- | --- |
