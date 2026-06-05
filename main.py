@@ -421,6 +421,23 @@ class PersonaPlus(Star):
         )
 
     @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_bare_status_command(self, event: AstrMessageEvent):
+        """Show Persona+ status for bare `/pp` command without shadowing subcommands."""
+
+        if not event.is_at_or_wake_command:
+            return
+
+        if event.get_message_str().strip().lower() not in self.QUICK_SWITCH_ALIASES:
+            return
+
+        if permission_error := self._permission_result(event, "help"):
+            yield permission_error
+            return
+
+        yield event.plain_result(await self._render_status(event))
+        event.stop_event()
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_quick_switch_command(self, event: AstrMessageEvent):
         """Handle quick switches such as `/pp <persona_id>`."""
 
@@ -450,17 +467,6 @@ class PersonaPlus(Star):
         event.stop_event()
 
     # ==================== Persona management commands ====================
-    @filter.command("persona_plus", alias={"pp", "persona+"}, priority=10)
-    async def cmd_status(self, event: AstrMessageEvent):
-        """Show Persona+ status for bare `/pp` command."""
-
-        if permission_error := self._permission_result(event, "help"):
-            yield permission_error
-            return
-
-        yield event.plain_result(await self._render_status(event))
-        event.stop_event()
-
     @filter.command_group("persona_plus", alias={"pp", "persona+"})
     @filter.custom_filter(NotBarePersonaPlusCommandFilter)
     def persona_plus(self):

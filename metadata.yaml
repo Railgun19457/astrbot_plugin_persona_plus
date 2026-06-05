@@ -2,6 +2,6 @@ name: astrbot_plugin_persona_plus
 display_name: 人格管理增强
 desc: 提供 指令/自然语言 管理人设(支持切换、创建、查看、更新、删除)、关键词自动切换、QQ头像/昵称的同步修改
 short_desc: 提供 指令/自然语言 管理人设(支持切换、创建、查看、更新、删除)、关键词自动切换、QQ头像/昵称的同步修改
-version: v1.4.6
+version: v1.4.7
 author: Railgun19457
 repo: https://github.com/Railgun19457/astrbot_plugin_persona_plus
