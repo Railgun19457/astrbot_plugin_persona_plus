@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Awaitable, Callable, TypeVar
+from typing import Awaitable, Callable, TypeAlias, TypeVar
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, MessageEventResult, filter
@@ -25,6 +25,16 @@ from .integrations.qq_profile_sync import QQProfileSync
 from .tools import build_llm_tools
 
 ToolResult = TypeVar("ToolResult")
+CommandResult: TypeAlias = MessageEventResult | None
+
+
+class NotBarePersonaPlusCommandFilter(filter.CustomFilter):
+    """Skip the command group when the message is only the root command."""
+
+    ROOT_COMMANDS = {"persona_plus", "pp", "persona+"}
+
+    def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
+        return event.get_message_str().strip().lower() not in self.ROOT_COMMANDS
 
 
 class PersonaPlus(Star):
@@ -43,6 +53,7 @@ class PersonaPlus(Star):
     KNOWN_SUBCOMMANDS = {
         "help",
         "list",
+        "switch",
         "view",
         "delete",
         "create",
@@ -196,6 +207,18 @@ class PersonaPlus(Star):
             admin_commands=self.admin_commands,
         )
 
+    def _permission_result(
+        self,
+        event: AstrMessageEvent,
+        command: str,
+    ) -> CommandResult:
+        """Return a command error result when the sender lacks permission."""
+
+        has_perm, err_msg = self.check_permission(event, command)
+        if has_perm:
+            return None
+        return event.plain_result(err_msg)
+
     def _get_command_prefix(self, event: AstrMessageEvent) -> str:
         """Get the visible wake prefix for command help text."""
 
@@ -217,6 +240,47 @@ class PersonaPlus(Star):
         """Append an admin marker to help lines that require admin permission."""
 
         return f"{text}  (管理员)" if command in self.admin_commands else text
+
+    async def _get_current_persona_id(self, event: AstrMessageEvent) -> str | None:
+        """Get the persona currently bound to the active conversation."""
+
+        cid = await self.context.conversation_manager.get_curr_conversation_id(
+            event.unified_msg_origin
+        )
+        if not cid:
+            return None
+
+        conversation = await self.context.conversation_manager.get_conversation(
+            event.unified_msg_origin,
+            cid,
+        )
+        if not conversation:
+            return None
+        return conversation.persona_id
+
+    async def _render_status(self, event: AstrMessageEvent) -> str:
+        """Render Persona+ status for the bare command entry."""
+
+        prefix = self._get_command_prefix(event)
+        cmd_alias_pp = f"{prefix}pp"
+
+        current_persona_id = await self._get_current_persona_id(event)
+        if not current_persona_id:
+            current_persona_id = (
+                self.context.get_config(event.unified_msg_origin)
+                .get("provider_settings", {})
+                .get("default_personality", "default")
+            )
+
+        return "\n".join(
+            [
+                "[Persona+ 状态]",
+                f"当前人格：{current_persona_id or '未设置'}",
+                "",
+                f"发送 {cmd_alias_pp} help 查看帮助。",
+                f"发送 {cmd_alias_pp} list 查看人格列表。",
+            ]
+        )
 
     @staticmethod
     def _safe_reply_template(reply_template: str, persona_id: str) -> str | None:
@@ -371,9 +435,8 @@ class PersonaPlus(Star):
         if not persona_id or persona_id.lower() in self.KNOWN_SUBCOMMANDS:
             return
 
-        has_perm, err_msg = self.check_permission(event, "switch")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "switch"):
+            yield permission_error
             return
 
         try:
@@ -387,7 +450,19 @@ class PersonaPlus(Star):
         event.stop_event()
 
     # ==================== Persona management commands ====================
+    @filter.command("persona_plus", alias={"pp", "persona+"}, priority=10)
+    async def cmd_status(self, event: AstrMessageEvent):
+        """Show Persona+ status for bare `/pp` command."""
+
+        if permission_error := self._permission_result(event, "help"):
+            yield permission_error
+            return
+
+        yield event.plain_result(await self._render_status(event))
+        event.stop_event()
+
     @filter.command_group("persona_plus", alias={"pp", "persona+"})
+    @filter.custom_filter(NotBarePersonaPlusCommandFilter)
     def persona_plus(self):
         """Persona+ command group entrypoint."""
         # The command group itself does not need implementation.
@@ -396,9 +471,8 @@ class PersonaPlus(Star):
     async def cmd_help(self, event: AstrMessageEvent):
         """Show Persona+ command help."""
 
-        has_perm, err_msg = self.check_permission(event, "help")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "help"):
+            yield permission_error
             return
 
         prefix = self._get_command_prefix(event)
@@ -413,6 +487,7 @@ class PersonaPlus(Star):
             "[快捷切换]",
             self._format_help_line("switch", f"{cmd_alias_pp} <人格ID>"),
             self._format_help_line("switch", f"{cmd_alias_pp} <文件夹/人格ID>"),
+            self._format_help_line("switch", f"{cmd_alias_pp} switch <文件夹/人格ID>"),
             "",
             "[查看与切换]",
             self._format_help_line("list", f"{cmd_alias_pp} list [文件夹路径]"),
@@ -433,13 +508,30 @@ class PersonaPlus(Star):
         ]
         yield event.plain_result("\n".join(sections))
 
+    @persona_plus.command("switch")
+    async def cmd_switch(self, event: AstrMessageEvent, persona_id: str):
+        """Switch persona explicitly, including names that match subcommands."""
+
+        if permission_error := self._permission_result(event, "switch"):
+            yield permission_error
+            return
+
+        try:
+            result = await self._switch_persona(event, persona_id=persona_id)
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+
+        if result is not None:
+            yield result
+        event.stop_event()
+
     @persona_plus.command("list")
-    async def cmd_list(self, event: AstrMessageEvent, folder_path: str | None = None):
+    async def cmd_list(self, event: AstrMessageEvent, folder_path: str = ""):
         """List registered personas."""
 
-        has_perm, err_msg = self.check_permission(event, "list")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "list"):
+            yield permission_error
             return
 
         try:
@@ -453,9 +545,8 @@ class PersonaPlus(Star):
     async def cmd_view(self, event: AstrMessageEvent, persona_id: str):
         """Show persona details."""
 
-        has_perm, err_msg = self.check_permission(event, "view")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "view"):
+            yield permission_error
             return
 
         try:
@@ -469,9 +560,8 @@ class PersonaPlus(Star):
     async def cmd_export(self, event: AstrMessageEvent, persona_id: str):
         """Export a persona system prompt as a file."""
 
-        has_perm, err_msg = self.check_permission(event, "export")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "export"):
+            yield permission_error
             return
 
         try:
@@ -490,9 +580,8 @@ class PersonaPlus(Star):
     async def cmd_delete(self, event: AstrMessageEvent, persona_id: str):
         """Delete a persona."""
 
-        has_perm, err_msg = self.check_permission(event, "delete")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "delete"):
+            yield permission_error
             return
 
         try:
@@ -509,9 +598,8 @@ class PersonaPlus(Star):
     async def cmd_create(self, event: AstrMessageEvent, persona_id: str):
         """Create a persona from the next text message or file."""
 
-        has_perm, err_msg = self.check_permission(event, "create")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "create"):
+            yield permission_error
             return
 
         try:
@@ -536,9 +624,8 @@ class PersonaPlus(Star):
     async def cmd_avatar(self, event: AstrMessageEvent, persona_id: str):
         """Upload or update a persona avatar."""
 
-        has_perm, err_msg = self.check_permission(event, "avatar")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "avatar"):
+            yield permission_error
             return
 
         try:
@@ -558,9 +645,8 @@ class PersonaPlus(Star):
     async def cmd_update(self, event: AstrMessageEvent, persona_id: str):
         """Update a persona with content from the next message."""
 
-        has_perm, err_msg = self.check_permission(event, "update")
-        if not has_perm:
-            yield event.plain_result(err_msg)
+        if permission_error := self._permission_result(event, "update"):
+            yield permission_error
             return
 
         try:
