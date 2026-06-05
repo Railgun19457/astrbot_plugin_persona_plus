@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
 from astrbot.api.event import AstrMessageEvent
 
+from .persona_index import group_personas_by_folder, sort_personas
 from .persona_references import PersonaReferenceResolver
 
 
@@ -27,16 +26,6 @@ def collect_folder_ids(folder_tree: list[dict]) -> set[str]:
         folder_ids.update(collect_folder_ids(folder.get("children", [])))
 
     return folder_ids
-
-
-def sort_personas(personas: list) -> list:
-    return sorted(
-        personas,
-        key=lambda persona: (
-            getattr(persona, "sort_order", 0),
-            str(getattr(persona, "persona_id", "")).casefold(),
-        ),
-    )
 
 
 def format_scope_brief(items: list[str] | None) -> str:
@@ -187,9 +176,14 @@ class PersonaRenderer:
         folder_tree = await self.persona_mgr.get_folder_tree()
         target_tree = folder_tree
         header = f"[人格列表] 共 {len(personas)} 个"
+        normalized_folder_path = ""
 
-        if folder_path:
-            normalized_folder_path = folder_path.strip().replace("\\", "/").strip("/")
+        if folder_path is not None:
+            normalized_folder_path = (
+                str(folder_path).strip().replace("\\", "/").strip("/")
+            )
+
+        if normalized_folder_path:
             folder_parts = [part for part in normalized_folder_path.split("/") if part]
             folder_id = await self.resolver.find_folder_id_by_path(folder_parts)
             folder_node = find_folder_tree_node(folder_tree, folder_id)
@@ -208,21 +202,17 @@ class PersonaRenderer:
                 f"（{visible_persona_count} 个）"
             )
 
-        personas_by_folder: dict[str, list] = defaultdict(list)
-        for persona in personas:
-            folder_id = getattr(persona, "folder_id", None)
-            if folder_id:
-                personas_by_folder[folder_id].append(persona)
+        personas_by_folder = group_personas_by_folder(personas)
 
         root_personas: list = []
-        if not folder_path:
+        if not normalized_folder_path:
             root_personas = sort_personas(
                 [persona for persona in personas if persona.folder_id is None]
             )
 
         lines = [header]
         ordered_persona_refs: list[str] = []
-        if folder_path:
+        if normalized_folder_path:
             tree_lines, tree_persona_refs, _next_index = build_folder_tree_output(
                 target_tree,
                 personas_by_folder,

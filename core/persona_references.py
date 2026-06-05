@@ -3,6 +3,8 @@ from __future__ import annotations
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
 
+from .persona_index import build_ordered_persona_references
+
 
 class PersonaReferenceResolver:
     """Resolve persona IDs, folder paths, and recent list indexes."""
@@ -13,7 +15,7 @@ class PersonaReferenceResolver:
 
     @staticmethod
     def normalize_reference(persona_reference: str) -> str:
-        return persona_reference.strip().replace("\\", "/").strip("/")
+        return str(persona_reference).strip().replace("\\", "/").strip("/")
 
     @classmethod
     def split_reference(cls, persona_reference: str) -> tuple[list[str], str]:
@@ -66,6 +68,40 @@ class PersonaReferenceResolver:
 
         return cached_references[index - 1]
 
+    async def get_global_index_reference(self, persona_reference: str) -> str | None:
+        normalized_reference = str(persona_reference).strip()
+        if not normalized_reference.isdigit():
+            return None
+
+        personas = await self.persona_mgr.get_all_personas()
+        folder_tree = await self.persona_mgr.get_folder_tree()
+        ordered_references = build_ordered_persona_references(personas, folder_tree)
+        if not ordered_references:
+            raise ValueError("当前还没有人格，请先创建一个。")
+
+        index = int(normalized_reference)
+        if index < 1 or index > len(ordered_references):
+            raise ValueError(
+                f"序号超出范围：{index}。当前可用范围是 1 - {len(ordered_references)}。"
+            )
+
+        return ordered_references[index - 1]
+
+    async def get_index_reference(
+        self,
+        event: AstrMessageEvent,
+        persona_reference: str,
+    ) -> str | None:
+        normalized_reference = str(persona_reference).strip()
+        if not normalized_reference.isdigit():
+            return None
+
+        cached_reference = self.get_cached_reference(event, normalized_reference)
+        if cached_reference is not None:
+            return cached_reference
+
+        return await self.get_global_index_reference(normalized_reference)
+
     async def find_folder_id_by_path(
         self,
         folder_parts: list[str],
@@ -107,26 +143,17 @@ class PersonaReferenceResolver:
         allow_index: bool = True,
     ) -> tuple[str | None, str]:
         normalized_reference = self.normalize_reference(persona_reference)
-        cached_reference = None
+        index_reference = None
         if allow_index:
-            cached_reference = self.get_cached_reference(event, normalized_reference)
-
-        try:
-            return await self.resolve(
-                cached_reference or normalized_reference,
-                require_existing=require_existing,
-                create_missing_folders=create_missing_folders,
+            index_reference = await self.get_index_reference(
+                event, normalized_reference
             )
-        except ValueError as exc:
-            if (
-                allow_index
-                and normalized_reference.isdigit()
-                and cached_reference is None
-            ):
-                raise ValueError(
-                    f"未找到人格：{normalized_reference}。如需使用序号，请先执行 list 查看当前编号。"
-                ) from exc
-            raise
+
+        return await self.resolve(
+            index_reference or normalized_reference,
+            require_existing=require_existing,
+            create_missing_folders=create_missing_folders,
+        )
 
     async def resolve(
         self,
@@ -147,9 +174,7 @@ class PersonaReferenceResolver:
         try:
             persona = await self.persona_mgr.get_persona(persona_id)
         except ValueError as exc:
-            if folder_parts:
-                raise ValueError(f"未找到人格：{persona_reference}") from exc
-            raise
+            raise ValueError(f"未找到人格：{persona_reference}") from exc
 
         if folder_id is not None and getattr(persona, "folder_id", None) != folder_id:
             raise ValueError(f"未找到人格：{persona_reference}")

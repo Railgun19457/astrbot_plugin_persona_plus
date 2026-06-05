@@ -213,6 +213,11 @@ class PersonaPlus(Star):
             )
         return str(wake_prefix).strip() or "/"
 
+    def _format_help_line(self, command: str, text: str) -> str:
+        """Append an admin marker to help lines that require admin permission."""
+
+        return f"{text}  (管理员)" if command in self.admin_commands else text
+
     @staticmethod
     def _safe_reply_template(reply_template: str, persona_id: str) -> str | None:
         """Render an auto-switch reply template safely."""
@@ -379,7 +384,7 @@ class PersonaPlus(Star):
 
         if result is not None:
             yield result
-            event.stop_event()
+        event.stop_event()
 
     # ==================== Persona management commands ====================
     @filter.command_group("persona_plus", alias={"pp", "persona+"})
@@ -406,24 +411,24 @@ class PersonaPlus(Star):
             f"别名：{cmd_base} / {cmd_alias_pp} / {cmd_alias_plus}",
             "",
             "[快捷切换]",
-            f"{cmd_alias_pp} <人格ID>",
-            f"{cmd_alias_pp} <文件夹/人格ID>",
+            self._format_help_line("switch", f"{cmd_alias_pp} <人格ID>"),
+            self._format_help_line("switch", f"{cmd_alias_pp} <文件夹/人格ID>"),
             "",
             "[查看与切换]",
-            f"{cmd_alias_pp} list [文件夹路径]",
-            f"{cmd_alias_pp} view <文件夹/人格ID>",
-            f"{cmd_alias_pp} export <文件夹/人格ID>",
+            self._format_help_line("list", f"{cmd_alias_pp} list [文件夹路径]"),
+            self._format_help_line("view", f"{cmd_alias_pp} view <文件夹/人格ID>"),
+            self._format_help_line("export", f"{cmd_alias_pp} export <文件夹/人格ID>"),
             "",
             "[编辑]",
-            f"{cmd_alias_pp} create <文件夹/人格ID>",
-            f"{cmd_alias_pp} update <文件夹/人格ID>",
-            f"{cmd_alias_pp} avatar <文件夹/人格ID>",
-            f"{cmd_alias_pp} delete <文件夹/人格ID>  (管理员)",
+            self._format_help_line("create", f"{cmd_alias_pp} create <文件夹/人格ID>"),
+            self._format_help_line("update", f"{cmd_alias_pp} update <文件夹/人格ID>"),
+            self._format_help_line("avatar", f"{cmd_alias_pp} avatar <文件夹/人格ID>"),
+            self._format_help_line("delete", f"{cmd_alias_pp} delete <文件夹/人格ID>"),
             "",
             "[说明]",
             "1. 文件夹路径使用 / 分隔",
             "2. 大多数情况下可直接使用人格 ID，不必带文件夹路径",
-            "3. list 输出的序号可直接用于切换、view、export、update、avatar、delete",
+            "3. 序号可用于切换、view、export、update、avatar、delete",
             "4. create / update 后可直接发送文本，或上传 .txt / .md 等文本文件",
         ]
         yield event.plain_result("\n".join(sections))
@@ -542,8 +547,8 @@ class PersonaPlus(Star):
                 persona_id,
                 require_existing=True,
             )
-        except ValueError:
-            yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
             return
 
         yield event.plain_result("请发送头像图片。")
@@ -564,8 +569,8 @@ class PersonaPlus(Star):
                 persona_id,
                 require_existing=True,
             )
-        except ValueError:
-            yield event.plain_result(f"未找到人格 {persona_id}，请先创建该人格。")
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
             return
 
         yield event.plain_result("请发送新的人设内容，可直接发文本或上传文本文件。")

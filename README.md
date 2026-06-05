@@ -138,7 +138,7 @@ QQ 资料同步仅适配 NapCat / OneBot 链路。
 | `keyword_mappings` | list | `["关键词:人格"]` | 关键词与人格映射列表，每项格式为 `关键词:人格ID`；人格 ID 可填写文件夹路径 |
 | `auto_switch_scope` | `conversation` / `session` / `global` | `conversation` | 人格切换生效范围 |
 | `manage_wait_timeout_seconds` | int | `60` | 创建、更新人格或上传头像时等待用户发送下一条内容的最长时间（秒） |
-| `admin_commands` | list | `["create", "update", "delete", "avatar"]` | 需要管理员权限的指令列表；默认普通用户可用 `switch`、`view`、`export`、`list`、`help` |
+| `admin_commands` | list | `["create", "update", "delete", "avatar", "export"]` | 需要管理员权限的指令列表；默认普通用户可用 `switch`、`view`、`list`、`help` |
 | `llm_tool_options` | list | `[]` | 向 LLM 暴露的人格函数工具列表 |
 | `enable_auto_switch_announce` | bool | `true` | 切换人格时是否发送提示 |
 | `clear_context_on_switch` | bool | `false` | 切换人格后是否自动清空当前对话上下文 |

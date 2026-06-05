@@ -25,7 +25,7 @@ def _normalize_str_set(values) -> set[str]:
 
 
 def _default_admin_commands() -> set[str]:
-    return {"create", "update", "delete", "avatar"}
+    return {"create", "update", "delete", "avatar", "export"}
 
 
 @dataclass(slots=True)
@@ -52,7 +52,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
             auto_switch_scope="conversation",
             keyword_switch_enabled=True,
             manage_wait_timeout=60,
-            admin_commands={"create", "update", "delete", "avatar"},
+            admin_commands=_default_admin_commands(),
             auto_switch_announce=True,
             clear_context_on_switch=False,
             llm_tool_options=set(),
@@ -104,7 +104,7 @@ def load_settings(config: AstrBotConfig | None) -> PersonaPlusSettings:
 
     admin_commands_raw = config.get(
         "admin_commands",
-        ["create", "update", "delete", "avatar"],
+        ["create", "update", "delete", "avatar", "export"],
     )
     if isinstance(admin_commands_raw, list):
         admin_commands = _normalize_str_set(admin_commands_raw)

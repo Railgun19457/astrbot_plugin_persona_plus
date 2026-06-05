@@ -33,7 +33,7 @@
     "hint": "勾选表示该指令需要管理员权限执行。",
     "type": "list",
     "options": ["switch", "create", "update", "delete", "export", "view", "list", "help", "avatar"],
-    "default": ["create", "update", "delete", "avatar","export"]
+    "default": ["create", "update", "delete", "avatar", "export"]
   },
   "llm_tool_options": {
     "description": "函数工具选项",
