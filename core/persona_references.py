@@ -7,11 +7,10 @@ from .persona_index import build_ordered_persona_references
 
 
 class PersonaReferenceResolver:
-    """Resolve persona IDs, folder paths, and recent list indexes."""
+    """Resolve persona IDs, folder paths, and global list indexes."""
 
     def __init__(self, persona_mgr):
         self.persona_mgr = persona_mgr
-        self._index_cache: dict[str, list[str]] = {}
 
     @staticmethod
     def normalize_reference(persona_reference: str) -> str:
@@ -28,45 +27,6 @@ class PersonaReferenceResolver:
             raise ValueError("人格 ID 不能为空。")
 
         return parts[:-1], parts[-1]
-
-    @staticmethod
-    def _index_cache_key(event: AstrMessageEvent) -> str:
-        return f"{event.unified_msg_origin}:{event.get_sender_id()}"
-
-    def cache_listed_personas(
-        self,
-        event: AstrMessageEvent | None,
-        persona_references: list[str],
-    ) -> None:
-        if event is None:
-            return
-
-        cache_key = self._index_cache_key(event)
-        if persona_references:
-            self._index_cache[cache_key] = persona_references
-        else:
-            self._index_cache.pop(cache_key, None)
-
-    def get_cached_reference(
-        self,
-        event: AstrMessageEvent,
-        persona_reference: str,
-    ) -> str | None:
-        normalized_reference = persona_reference.strip()
-        if not normalized_reference.isdigit():
-            return None
-
-        cached_references = self._index_cache.get(self._index_cache_key(event))
-        if not cached_references:
-            return None
-
-        index = int(normalized_reference)
-        if index < 1 or index > len(cached_references):
-            raise ValueError(
-                f"序号超出范围：{index}。当前可用范围是 1 - {len(cached_references)}。"
-            )
-
-        return cached_references[index - 1]
 
     async def get_global_index_reference(self, persona_reference: str) -> str | None:
         normalized_reference = str(persona_reference).strip()
@@ -86,21 +46,6 @@ class PersonaReferenceResolver:
             )
 
         return ordered_references[index - 1]
-
-    async def get_index_reference(
-        self,
-        event: AstrMessageEvent,
-        persona_reference: str,
-    ) -> str | None:
-        normalized_reference = str(persona_reference).strip()
-        if not normalized_reference.isdigit():
-            return None
-
-        cached_reference = self.get_cached_reference(event, normalized_reference)
-        if cached_reference is not None:
-            return cached_reference
-
-        return await self.get_global_index_reference(normalized_reference)
 
     async def find_folder_id_by_path(
         self,
@@ -145,8 +90,8 @@ class PersonaReferenceResolver:
         normalized_reference = self.normalize_reference(persona_reference)
         index_reference = None
         if allow_index:
-            index_reference = await self.get_index_reference(
-                event, normalized_reference
+            index_reference = await self.get_global_index_reference(
+                normalized_reference
             )
 
         return await self.resolve(

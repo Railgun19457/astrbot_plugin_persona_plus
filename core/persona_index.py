@@ -61,3 +61,16 @@ def build_ordered_persona_references(
         collect_folder_tree_persona_references(folder_tree, personas_by_folder)
     )
     return ordered_references
+
+
+def build_global_index_by_persona_id(
+    personas: list,
+    folder_tree: list[dict],
+) -> dict[str, int]:
+    return {
+        persona_id: index
+        for index, persona_id in enumerate(
+            build_ordered_persona_references(personas, folder_tree),
+            start=1,
+        )
+    }

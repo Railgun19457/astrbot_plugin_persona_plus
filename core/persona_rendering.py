@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from astrbot.api.event import AstrMessageEvent
 
-from .persona_index import group_personas_by_folder, sort_personas
+from .persona_index import (
+    build_global_index_by_persona_id,
+    group_personas_by_folder,
+    sort_personas,
+)
 from .persona_references import PersonaReferenceResolver
 
 
@@ -78,13 +82,13 @@ def build_persona_list_lines(
 def build_folder_tree_node_output(
     folder: dict,
     personas_by_folder: dict[str, list],
+    global_index_by_persona_id: dict[str, int],
     prefix: str,
     is_last: bool,
-    start_index: int,
-) -> tuple[list[str], list[str], int]:
+):
+    """Build folder tree output with stable global persona indexes."""
+
     lines: list[str] = []
-    ordered_persona_refs: list[str] = []
-    current_index = start_index
     branch = "└─ " if is_last else "├─ "
     lines.append(f"{prefix}{branch}{build_folder_label(folder['name'])}")
 
@@ -100,49 +104,43 @@ def build_folder_tree_node_output(
             build_persona_list_lines(
                 persona,
                 child_prefix,
-                current_index,
+                global_index_by_persona_id.get(persona.persona_id),
                 is_last=child_index == child_count,
             )
         )
-        ordered_persona_refs.append(persona.persona_id)
-        current_index += 1
 
     for child_folder in children:
         child_index += 1
-        child_lines, child_refs, current_index = build_folder_tree_node_output(
+        child_lines = build_folder_tree_node_output(
             child_folder,
             personas_by_folder,
+            global_index_by_persona_id,
             prefix=child_prefix,
             is_last=child_index == child_count,
-            start_index=current_index,
         )
         lines.extend(child_lines)
-        ordered_persona_refs.extend(child_refs)
 
-    return lines, ordered_persona_refs, current_index
+    return lines
 
 
 def build_folder_tree_output(
     folder_tree: list[dict],
     personas_by_folder: dict[str, list],
-    start_index: int = 1,
-) -> tuple[list[str], list[str], int]:
+    global_index_by_persona_id: dict[str, int],
+) -> list[str]:
     lines: list[str] = []
-    ordered_persona_refs: list[str] = []
-    current_index = start_index
 
     for index, folder in enumerate(folder_tree):
-        folder_lines, folder_refs, current_index = build_folder_tree_node_output(
+        folder_lines = build_folder_tree_node_output(
             folder,
             personas_by_folder,
+            global_index_by_persona_id,
             prefix="",
             is_last=index == len(folder_tree) - 1,
-            start_index=current_index,
         )
         lines.extend(folder_lines)
-        ordered_persona_refs.extend(folder_refs)
 
-    return lines, ordered_persona_refs, current_index
+    return lines
 
 
 def indent_text_block(text: str, prefix: str = "  ") -> str:
@@ -203,6 +201,10 @@ class PersonaRenderer:
             )
 
         personas_by_folder = group_personas_by_folder(personas)
+        global_index_by_persona_id = build_global_index_by_persona_id(
+            personas,
+            folder_tree,
+        )
 
         root_personas: list = []
         if not normalized_folder_path:
@@ -211,13 +213,12 @@ class PersonaRenderer:
             )
 
         lines = [header]
-        ordered_persona_refs: list[str] = []
         if normalized_folder_path:
-            tree_lines, tree_persona_refs, _next_index = build_folder_tree_output(
+            tree_lines = build_folder_tree_output(
                 target_tree,
                 personas_by_folder,
+                global_index_by_persona_id,
             )
-            ordered_persona_refs.extend(tree_persona_refs)
             if tree_lines:
                 lines.append("")
                 lines.extend(tree_lines)
@@ -225,7 +226,6 @@ class PersonaRenderer:
                 lines.extend(["", "（当前文件夹下还没有人格）"])
         else:
             lines.extend(["", build_folder_label("根目录")])
-            next_index = 1
             root_child_count = len(root_personas) + len(target_tree)
             root_child_index = 0
 
@@ -235,26 +235,22 @@ class PersonaRenderer:
                     build_persona_list_lines(
                         persona,
                         "",
-                        next_index,
+                        global_index_by_persona_id.get(persona.persona_id),
                         is_last=root_child_index == root_child_count,
                     )
                 )
-                ordered_persona_refs.append(persona.persona_id)
-                next_index += 1
 
             for folder in target_tree:
                 root_child_index += 1
-                folder_lines, folder_refs, next_index = build_folder_tree_node_output(
+                folder_lines = build_folder_tree_node_output(
                     folder,
                     personas_by_folder,
+                    global_index_by_persona_id,
                     prefix="",
                     is_last=root_child_index == root_child_count,
-                    start_index=next_index,
                 )
                 lines.extend(folder_lines)
-                ordered_persona_refs.extend(folder_refs)
 
-        self.resolver.cache_listed_personas(event, ordered_persona_refs)
         return "\n".join(lines)
 
     async def render_detail(
