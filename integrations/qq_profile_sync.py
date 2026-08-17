@@ -4,7 +4,6 @@ import base64
 from pathlib import Path
 
 import aiofiles
-import aiohttp
 
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
@@ -73,14 +72,19 @@ class QQProfileSync:
     def get_avatar_path(self, persona_id: str) -> Path:
         return self.avatar_dir / f"{persona_id}.jpg"
 
-    async def download_and_save_avatar(self, url: str, save_path: Path) -> None:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"下载头像失败，状态码 {resp.status}")
-                async with aiofiles.open(save_path, "wb") as f:
-                    await f.write(await resp.read())
-        logger.debug("Persona+ 已下载头像至 %s", save_path)
+    async def _copy_avatar_file(self, src: Path, dest: Path) -> None:
+        """Copy a local image file into the persona avatar cache."""
+
+        if not src.exists() or not src.is_file():
+            raise ValueError("图片文件不存在，请重新发送。")
+
+        async with aiofiles.open(src, "rb") as src_fp:
+            data = await src_fp.read()
+        if not data:
+            raise ValueError("图片文件为空，请重新发送。")
+        async with aiofiles.open(dest, "wb") as dest_fp:
+            await dest_fp.write(data)
+        logger.debug("Persona+ 已保存头像至 %s", dest)
 
     def extract_image_component(
         self, event: AstrMessageEvent
@@ -103,10 +107,9 @@ class QQProfileSync:
 
         avatar_path = self.get_avatar_path(persona_id)
 
-        if isinstance(image_component, Comp.Image) and getattr(
-            image_component, "url", None
-        ):
-            await self.download_and_save_avatar(image_component.url, avatar_path)
+        if isinstance(image_component, Comp.Image):
+            src = Path(await image_component.convert_to_file_path())
+            await self._copy_avatar_file(src, avatar_path)
             return avatar_path
 
         if isinstance(image_component, Comp.File):
@@ -116,10 +119,7 @@ class QQProfileSync:
             src = Path(temp_path)
             if src.suffix.lower() not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
                 raise ValueError("仅支持 jpg/jpeg/png/gif/webp 图片文件。")
-            async with aiofiles.open(src, "rb") as src_fp:
-                data = await src_fp.read()
-            async with aiofiles.open(avatar_path, "wb") as dest_fp:
-                await dest_fp.write(data)
+            await self._copy_avatar_file(src, avatar_path)
             return avatar_path
 
         raise ValueError("暂不支持此类消息，请发送图片或图片文件。")
