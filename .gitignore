@@ -2,3 +2,6 @@ __pycache__/
 core/__pycache__/
 integrations/__pycache__/
 .vscode/
+.ruff_cache/
+data/
+.venv/
