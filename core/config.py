@@ -13,6 +13,7 @@ LLM_TOOL_OPTIONS = (
     "view",
     "create",
     "update",
+    "avatar",
     "export",
     "delete",
 )

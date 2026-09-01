@@ -13,6 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from astrbot.core.star.star_tools import StarTools
+from astrbot.core.utils.media_utils import MediaResolver, detect_image_mime_type_async
 
 MAX_SYNC_CACHE_SIZE = 1024
 
@@ -86,6 +87,63 @@ class QQProfileSync:
             await dest_fp.write(data)
         logger.debug("Persona+ 已保存头像至 %s", dest)
 
+    async def save_avatar_from_source(
+        self,
+        persona_id: str,
+        image_source: str,
+    ) -> Path:
+        """Save a persona avatar from a supported media reference.
+
+        Args:
+            persona_id: Persona ID that owns the avatar.
+            image_source: Local path, file URI, HTTP(S) URL, or base64 image data.
+
+        Returns:
+            Cached avatar path.
+
+        Raises:
+            ValueError: If the image source is empty or cannot be resolved.
+        """
+
+        image_source = image_source.strip()
+        if not image_source:
+            raise ValueError("图片来源不能为空。")
+
+        avatar_path = self.get_avatar_path(persona_id)
+        # as_path() removes resolver-owned temp files after the copy.
+        async with MediaResolver(
+            image_source,
+            media_type="image",
+        ).as_path() as resolved_image:
+            mime_type = await detect_image_mime_type_async(
+                resolved_image.path,
+                default_mime_type=None,
+            )
+            if not mime_type:
+                raise ValueError("图片来源不是有效的图片文件。")
+            await self._copy_avatar_file(resolved_image.path, avatar_path)
+        self.reset_persona_cache(persona_id)
+        return avatar_path
+
+    async def get_avatar_source(self, persona_id: str) -> str:
+        """Return the cached avatar path so callers can reuse it as image_source.
+
+        Args:
+            persona_id: Persona ID that owns the avatar.
+
+        Returns:
+            Absolute local path of the cached avatar.
+
+        Raises:
+            ValueError: If the persona does not have an avatar.
+        """
+
+        avatar_path = self.get_avatar_path(persona_id)
+        if not avatar_path.is_file():
+            raise ValueError(f"人格 {persona_id} 尚未设置头像。")
+
+        return str(avatar_path.resolve())
+
     def extract_image_component(
         self, event: AstrMessageEvent
     ) -> Comp.BaseMessageComponent | None:
@@ -105,12 +163,11 @@ class QQProfileSync:
         if not image_component:
             raise ValueError("未检测到图片或文件，请附带或引用一张图片。")
 
-        avatar_path = self.get_avatar_path(persona_id)
-
         if isinstance(image_component, Comp.Image):
-            src = Path(await image_component.convert_to_file_path())
-            await self._copy_avatar_file(src, avatar_path)
-            return avatar_path
+            return await self.save_avatar_from_source(
+                persona_id,
+                await image_component.convert_to_file_path(),
+            )
 
         if isinstance(image_component, Comp.File):
             temp_path = await image_component.get_file()
@@ -119,8 +176,7 @@ class QQProfileSync:
             src = Path(temp_path)
             if src.suffix.lower() not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
                 raise ValueError("仅支持 jpg/jpeg/png/gif/webp 图片文件。")
-            await self._copy_avatar_file(src, avatar_path)
-            return avatar_path
+            return await self.save_avatar_from_source(persona_id, str(src))
 
         raise ValueError("暂不支持此类消息，请发送图片或图片文件。")
 

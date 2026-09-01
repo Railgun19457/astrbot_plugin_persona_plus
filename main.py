@@ -46,6 +46,7 @@ class PersonaPlus(Star):
         "view": "persona_view",
         "create": "persona_create",
         "update": "persona_update",
+        "avatar": "persona_avatar",
         "export": "persona_export",
         "delete": "persona_delete",
     }

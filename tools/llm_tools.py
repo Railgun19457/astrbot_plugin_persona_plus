@@ -326,6 +326,74 @@ class PersonaPlusUpdateTool(_BasePersonaTool):
 
 
 @pydantic_dataclass
+class PersonaPlusAvatarTool(_BasePersonaTool):
+    name: str = "persona_avatar"
+    description: str = "读取、设置或移除指定人设的头像，可使用图片 URL、本地路径、file URI 或 base64 图片数据"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["get", "set", "remove"],
+                    "description": "头像操作：get 读取头像文件路径，set 设置头像，remove 移除头像",
+                },
+                "persona_reference": {
+                    "type": "string",
+                    "description": "目标人设 ID，或 文件夹/人设ID 路径",
+                },
+                "image_source": {
+                    "type": "string",
+                    "description": "仅 operation=set 时必填。图片 HTTP(S) URL、本地绝对路径、file URI、base64:// 或 data:image base64 数据",
+                },
+            },
+            "required": ["operation", "persona_reference"],
+        }
+    )
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        **kwargs: Any,
+    ) -> ToolExecResult:
+        plugin = self.plugin
+        if plugin is None:
+            return "管理人设头像失败，请稍后重试。"
+
+        operation = self._as_text(kwargs.get("operation", "")).lower()
+        persona_reference = self._as_text(kwargs.get("persona_reference", ""))
+        image_source = self._as_text(kwargs.get("image_source", ""))
+
+        async def manage_avatar():
+            index_reference = await plugin.resolver.get_global_index_reference(
+                persona_reference
+            )
+            _, persona_id = await plugin.resolver.resolve(
+                index_reference or persona_reference,
+                require_existing=True,
+            )
+            if operation == "get":
+                avatar_source = await plugin.qq_sync.get_avatar_source(persona_id)
+                return f"人格 {persona_id} 的头像文件路径：{avatar_source}"
+            if operation == "remove":
+                plugin.qq_sync.delete_avatar(persona_id)
+                return f"已移除人格 {persona_id} 的头像"
+            if operation != "set":
+                raise ValueError("operation 仅支持 get、set 或 remove。")
+            if not image_source:
+                raise ValueError("设置头像时必须提供 image_source。")
+
+            await plugin.qq_sync.save_avatar_from_source(persona_id, image_source)
+            return f"已设置人格 {persona_id} 的头像"
+
+        return await plugin._run_llm_tool(
+            "avatar",
+            manage_avatar,
+            "管理人设头像失败，请稍后重试。",
+        )
+
+
+@pydantic_dataclass
 class PersonaPlusExportTool(_BasePersonaTool):
     name: str = "persona_export"
     description: str = "导出指定人设的 System Prompt 为 Markdown 文件并发送给当前会话"
@@ -405,6 +473,7 @@ def build_llm_tools(plugin) -> list[FunctionTool[AstrAgentContext]]:
         PersonaPlusViewTool(),
         PersonaPlusCreateTool(),
         PersonaPlusUpdateTool(),
+        PersonaPlusAvatarTool(),
         PersonaPlusExportTool(),
         PersonaPlusDeleteTool(),
     ]

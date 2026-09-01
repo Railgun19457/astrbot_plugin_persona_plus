@@ -1,4 +1,10 @@
 ### 更新日志
+#### v1.4.9
+  - 新增 `persona_avatar` 函数工具，支持 get / set / remove
+  - `set` 可通过 URL、本地路径、file URI 或 Base64 设置任意人格头像
+  - `get` 返回当前头像的本地文件路径，便于其他工具直接复用
+  - `/pp avatar` 与函数工具共用同一套头像来源保存入口
+
 #### v1.4.8
   - 修复 WebChat 等平台上传头像时把本地附件路径当成 HTTP URL 下载导致失败的问题
   - 头像保存改为复用框架的 `Image.convert_to_file_path()`，统一处理本地路径、file URI 和网络下载
